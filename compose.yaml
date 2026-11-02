@@ -1,0 +1,55 @@
+name: retro-k8s-poc
+
+x-retroarch-common: &retroarch-common
+  image: retro-k8s-poc/retroarch:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: "no"
+  user: "${PUID:-1000}:${PGID:-1000}"
+  depends_on:
+    - mediamtx
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1
+    container_name: mediamtx
+    restart: unless-stopped
+    ports:
+      - "1935:1935/tcp"   # RTMP ingest
+      - "8889:8889/tcp"   # WebRTC browser reader
+      - "8189:8189/udp"   # WebRTC media
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+
+  retroarch-snes:
+    <<: *retroarch-common
+    container_name: retroarch-snes
+    environment:
+      CORE: snes9x
+      ROM_PATH: "/roms/snes/${SNES_ROM:?set SNES_ROM in .env}"
+      STREAM_URL: rtmp://mediamtx:1935/snes
+      SAVE_PATH: /saves
+      VIDEO_DRIVER: "gl"
+      AUDIO_DRIVER: "null"
+      RTMP_HOST: mediamtx
+      RTMP_PORT: "1935"
+    volumes:
+      - ${HOME}/Documents/games:/roms:ro
+      - ./saves/snes:/saves
+
+  retroarch-gba:
+    <<: *retroarch-common
+    container_name: retroarch-gba
+    environment:
+      CORE: mgba
+      ROM_PATH: "/roms/gba/${GBA_ROM:?set GBA_ROM in .env}"
+      STREAM_URL: rtmp://mediamtx:1935/gba
+      SAVE_PATH: /saves
+      VIDEO_DRIVER: "gl"
+      AUDIO_DRIVER: "null"
+      RTMP_HOST: mediamtx
+      RTMP_PORT: "1935"
+    volumes:
+      - ${HOME}/Documents/games:/roms:ro
+      - ./saves/gba:/saves

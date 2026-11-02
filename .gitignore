@@ -1,0 +1,6 @@
+.env
+saves/*
+!saves/snes/.gitkeep
+!saves/gba/.gitkeep
+data/
+*.log
