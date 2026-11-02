@@ -32,11 +32,13 @@ services:
       SESSIONS: snes,gba
     # The development token issuer has no user authentication. Keep it local.
     ports:
-      - "127.0.0.1:8000:8000/tcp"
+      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000/tcp"
 
   mediamtx:
     image: bluenviron/mediamtx:1
     container_name: mediamtx
+    environment:
+      MTX_WEBRTCADDITIONALHOSTS: ${WEBRTC_ADDITIONAL_HOSTS:-127.0.0.1}
     restart: unless-stopped
     ports:
       - "1935:1935/tcp"   # RTMP ingest
@@ -69,7 +71,7 @@ services:
       AGENT_PORT: "8765"
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
     ports:
-      - "127.0.0.1:8765:8765/tcp"   # input WebSocket
+      - "${BIND_ADDRESS:-127.0.0.1}:8765:8765/tcp"   # input WebSocket
     volumes:
       - ${HOME}/Documents/games:/roms:ro
       - ./saves/snes:/saves
@@ -100,7 +102,7 @@ services:
       AGENT_PORT: "8766"
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
     ports:
-      - "127.0.0.1:8766:8766/tcp"   # input WebSocket
+      - "${BIND_ADDRESS:-127.0.0.1}:8766:8766/tcp"   # input WebSocket
     volumes:
       - ${HOME}/Documents/games:/roms:ro
       - ./saves/gba:/saves
