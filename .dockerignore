@@ -6,3 +6,7 @@ data
 README.md
 compose.yaml
 mediamtx
+
+**/__pycache__
+**/*.py[cod]
+.venv

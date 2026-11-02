@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS retroarch-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -83,3 +83,20 @@ ENV CORE_PATH=/opt/retroarch/cores \
     HOME=/tmp/retroarch
 
 ENTRYPOINT ["/usr/local/bin/retroarch-entrypoint"]
+
+# Session image: emulator and input agent share the same Linux input devices.
+FROM retroarch-base AS retroarch-input
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 python3-venv python3-evdev \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv --system-site-packages /opt/venv
+COPY input-agent/requirements.txt /tmp/input-requirements.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/input-requirements.txt
+WORKDIR /app
+COPY input-agent/agent/ /app/agent/
+COPY input-agent/input-wrapper.sh /input-wrapper.sh
+RUN chmod +x /input-wrapper.sh
+ENV PATH="/opt/venv/bin:${PATH}" PYTHONUNBUFFERED=1 \
+    ORIGINAL_ENTRYPOINT=/usr/local/bin/retroarch-entrypoint INPUT_AGENT=1
+ENTRYPOINT ["/input-wrapper.sh"]

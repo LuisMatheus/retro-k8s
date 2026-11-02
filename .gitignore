@@ -4,3 +4,7 @@ saves/*
 !saves/gba/.gitkeep
 data/
 *.log
+
+__pycache__/
+*.py[cod]
+.venv/

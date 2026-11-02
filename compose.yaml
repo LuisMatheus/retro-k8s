@@ -1,12 +1,22 @@
 name: retro-k8s-poc
 
 x-retroarch-common: &retroarch-common
-  image: retro-k8s-poc/retroarch:latest
+  image: retro-k8s-poc/retroarch-input:latest
   build:
     context: .
     dockerfile: Dockerfile
+    target: retroarch-input
   restart: "no"
   user: "${PUID:-1000}:${PGID:-1000}"
+  # Non-root needs the host's "input" group to open /dev/uinput and /dev/input/event*
+  # Find it with: getent group input | cut -d: -f3
+  group_add:
+    - "${INPUT_GID:?set INPUT_GID in .env}"
+  devices:
+    - /dev/uinput:/dev/uinput
+  # The virtual pad's eventN node is created after start; allow input devices (major 13)
+  device_cgroup_rules:
+    - "c 13:* rmw"
   depends_on:
     - mediamtx
 
@@ -31,12 +41,27 @@ services:
       STREAM_URL: rtmp://mediamtx:1935/snes
       SAVE_PATH: /saves
       VIDEO_DRIVER: "gl"
-      AUDIO_DRIVER: "null"
+      AUDIO_DRIVER: "sdl2"
+      SDL_AUDIODRIVER: "dummy"
+      SHOW_FPS: ${SHOW_FPS:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MIN_HOLD_MS: ${MIN_HOLD_MS:-40}
       RTMP_HOST: mediamtx
       RTMP_PORT: "1935"
+      # --- input agent ---
+      SESSION_ID: snes
+      INPUT_AGENT: "1"
+      DEVICE_NAME: "Retro-K8s Pad snes"
+      INPUT_TOKEN_SECRET: ${INPUT_TOKEN_SECRET:?set INPUT_TOKEN_SECRET in .env}
+      AGENT_PORT: "8765"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    ports:
+      - "127.0.0.1:8765:8765/tcp"   # input WebSocket
     volumes:
       - ${HOME}/Documents/games:/roms:ro
       - ./saves/snes:/saves
+      - /dev/input:/dev/input
+      - /run/udev:/run/udev:ro
 
   retroarch-gba:
     <<: *retroarch-common
@@ -47,9 +72,24 @@ services:
       STREAM_URL: rtmp://mediamtx:1935/gba
       SAVE_PATH: /saves
       VIDEO_DRIVER: "gl"
-      AUDIO_DRIVER: "null"
+      AUDIO_DRIVER: "sdl2"
+      SDL_AUDIODRIVER: "dummy"
+      SHOW_FPS: ${SHOW_FPS:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MIN_HOLD_MS: ${MIN_HOLD_MS:-40}
       RTMP_HOST: mediamtx
       RTMP_PORT: "1935"
+      # --- input agent ---
+      SESSION_ID: gba
+      INPUT_AGENT: "1"
+      DEVICE_NAME: "Retro-K8s Pad gba"
+      INPUT_TOKEN_SECRET: ${INPUT_TOKEN_SECRET:?set INPUT_TOKEN_SECRET in .env}
+      AGENT_PORT: "8766"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    ports:
+      - "127.0.0.1:8766:8766/tcp"   # input WebSocket
     volumes:
       - ${HOME}/Documents/games:/roms:ro
       - ./saves/gba:/saves
+      - /dev/input:/dev/input
+      - /run/udev:/run/udev:ro
