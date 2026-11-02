@@ -1,0 +1,10 @@
+# Local development UI and token issuer; no uinput/device access required.
+FROM python:3.12-slim
+WORKDIR /app
+COPY input-agent/dev-server.py /app/dev-server.py
+COPY input-agent/browser/ /app/browser/
+COPY input-agent/agent/__init__.py input-agent/agent/auth.py /app/agent/
+ENV PYTHONUNBUFFERED=1 DEV_HOST=0.0.0.0 DEV_PORT=8000
+USER 1000:1000
+EXPOSE 8000
+CMD ["python3", "/app/dev-server.py"]

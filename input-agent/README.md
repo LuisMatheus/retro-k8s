@@ -4,6 +4,11 @@ Browser → authenticated WebSocket → Python agent → uinput gamepad → Retr
 The agent and emulator share a container. See [the project README](../README.md)
 for the integrated build, Linux host setup, browser UI, and Compose commands.
 
+`docker compose up --build frontend mediamtx retroarch-snes` starts everything
+needed for local SNES play, including the UI/token service on localhost:8000.
+The input agent stays inside the emulator container; `frontend` serves the
+webpage and development tokens and has no host input-device access.
+
 ## Tests
 
 From the repository root:

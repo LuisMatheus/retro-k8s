@@ -19,7 +19,7 @@ browser and trigger RetroArch pause/reset/menu hotkeys.
 ## Layout
 
 - `Dockerfile`: builds RetroArch v1.22.2 and Snes9x/mGBA cores, then adds the agent.
-- `compose.yaml`: MediaMTX and two independently configured emulator sessions.
+- `compose.yaml`: browser/token server, MediaMTX, and two emulator sessions.
 - `entrypoint.sh`: generates RetroArch config/autoconfiguration and starts Xvfb.
 - `input-agent/agent/`: authentication, protocol, state, WebSocket server, uinput.
 - `input-agent/input-wrapper.sh`: starts the agent before RetroArch and supervises both.
@@ -75,7 +75,7 @@ The private `.env`, ROMs, and existing game saves are not tracked in Git.
 mkdir -p saves/snes/states saves/gba/states
 docker compose build
 # Start one session first:
-docker compose up mediamtx retroarch-snes
+docker compose up frontend mediamtx retroarch-snes
 ```
 
 For GBA use `retroarch-gba`, or start both with `docker compose up` after checking
@@ -86,15 +86,13 @@ To build only the original emulator image, use:
 docker build --target retroarch-base -t retro-k8s-poc/retroarch:latest .
 ```
 
-In another terminal, from the project root:
-
-```bash
-python3 input-agent/dev-server.py
-```
+Compose starts the browser UI and development token endpoint automatically.
+If you previously ran `python3 input-agent/dev-server.py`, stop that process
+with Ctrl+C first so the frontend container can bind localhost:8000.
 
 Open [the controller UI](http://localhost:8000). Select SNES or GBA, click Unmute
-for audio, and keep the page focused while playing. The dev server uses only
-Python's standard library and reads the same secret from `.env`.
+for audio, and keep the page focused while playing. The frontend container receives the same token secret as the session agent
+through Compose; no Python process is needed on your host.
 
 The agent endpoints bind to localhost:8765 (SNES) and localhost:8766 (GBA).
 The UI obtains a short-lived session token automatically. Media-only readers
@@ -156,8 +154,7 @@ Rebuild/recreate the emulator container after updating the agent, then reload th
 page (a hard refresh may be needed for cached JavaScript):
 
 ```bash
-docker compose up --build mediamtx retroarch-snes
-python3 input-agent/dev-server.py
+docker compose up --build frontend mediamtx retroarch-snes
 ```
 
 The panel shows:
@@ -213,4 +210,5 @@ on port 8889 and local WebSocket input ports; it is not a production gateway.
 docker compose down
 ```
 
-Stop the development server with Ctrl+C.
+Compose also stops the frontend. For frontend/token logs, run
+`docker compose logs -f frontend`.

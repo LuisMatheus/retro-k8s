@@ -21,6 +21,19 @@ x-retroarch-common: &retroarch-common
     - mediamtx
 
 services:
+  frontend:
+    image: retro-k8s-poc/frontend:latest
+    build:
+      context: .
+      dockerfile: input-agent/frontend.Dockerfile
+    restart: unless-stopped
+    environment:
+      INPUT_TOKEN_SECRET: ${INPUT_TOKEN_SECRET:?set INPUT_TOKEN_SECRET in .env}
+      SESSIONS: snes,gba
+    # The development token issuer has no user authentication. Keep it local.
+    ports:
+      - "127.0.0.1:8000:8000/tcp"
+
   mediamtx:
     image: bluenviron/mediamtx:1
     container_name: mediamtx
