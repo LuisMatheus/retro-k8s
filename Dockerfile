@@ -46,13 +46,14 @@ RUN ./configure \
     && make install \
     && ldconfig
 
-# Libretro cores. TARGETARCH is supplied by BuildKit, so the same Dockerfile
-# works on amd64 and arm64 (Apple Silicon).
+# BuildKit supplies TARGETARCH; older builders can use the image's native
+# Debian architecture instead. Never assume an unspecified target is amd64.
 ARG TARGETARCH
-RUN case "${TARGETARCH:-amd64}" in \
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+    && case "$ARCH" in \
       amd64) LIBRETRO_ARCH="x86_64" ;; \
       arm64) LIBRETRO_ARCH="aarch64" ;; \
-      *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+      *) echo "Unsupported architecture: ${ARCH}" >&2; exit 1 ;; \
     esac \
     && mkdir -p /opt/retroarch/cores \
     && curl -fL \

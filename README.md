@@ -36,7 +36,11 @@ Put the files here:
 
 ## 2. Select the ROMs
 
-Edit `.env` (already created from the examples):
+Copy the example and edit `.env`:
+
+```bash
+cp .env.example .env
+```
 
 ```dotenv
 SNES_ROM="Chrono Trigger (USA).sfc"
@@ -47,7 +51,7 @@ PGID=1001
 ```
 
 The filenames are relative to the matching `games/` subdirectory. Quote names
-that contain spaces. Compose fails fast if either ROM variable is empty.
+that contain spaces. Set the filename for each session you intend to run.
 `PUID`/`PGID` should match your host user (`id -u`, `id -g`).
 
 ## 3. Build
@@ -57,8 +61,13 @@ docker compose build
 ```
 
 This compiles RetroArch `v1.22.2` from source with FFmpeg support and downloads
-the Snes9x and mGBA cores for the host architecture (amd64 or arm64). The first
+the Snes9x and mGBA cores for the target architecture: Linux x64 (`amd64`) or
+ARM64 (`arm64`). Docker selects the host architecture by default. The first
 build takes a while; later builds are cached.
+
+On an Apple Silicon Mac, start Docker Desktop and use its Linux container
+backend. The image builds for Linux arm64 natively; Rosetta is not required.
+Ensure Docker Desktop can access your `Documents/games` directory.
 
 Check that FFmpeg made it into the binary:
 

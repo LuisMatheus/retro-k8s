@@ -27,7 +27,7 @@ services:
     container_name: retroarch-snes
     environment:
       CORE: snes9x
-      ROM_PATH: "/roms/snes/${SNES_ROM:?set SNES_ROM in .env}"
+      ROM_PATH: "/roms/snes/${SNES_ROM:-}"
       STREAM_URL: rtmp://mediamtx:1935/snes
       SAVE_PATH: /saves
       VIDEO_DRIVER: "gl"
@@ -43,7 +43,7 @@ services:
     container_name: retroarch-gba
     environment:
       CORE: mgba
-      ROM_PATH: "/roms/gba/${GBA_ROM:?set GBA_ROM in .env}"
+      ROM_PATH: "/roms/gba/${GBA_ROM:-}"
       STREAM_URL: rtmp://mediamtx:1935/gba
       SAVE_PATH: /saves
       VIDEO_DRIVER: "gl"
