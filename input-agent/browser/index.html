@@ -23,6 +23,17 @@
   table { border-collapse:collapse; margin-top:8px; }
   td { padding:2px 14px 2px 0; color:var(--mut); }
   td:first-child { color:var(--fg); }
+  #diagnostics { margin-top:24px; padding:16px; background:var(--card); border-radius:8px; }
+  #diagnostics h2 { margin:0; font-size:18px; }
+  .debug-toolbar { display:flex; gap:16px; flex-wrap:wrap; align-items:center; }
+  #metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(175px,1fr)); gap:12px; margin:16px 0; }
+  .metric span { display:block; font-size:12px; color:var(--mut); }
+  .metric strong { display:block; font-size:20px; font-variant-numeric:tabular-nums; }
+  .debug-note { color:var(--mut); font-size:13px; }
+  .event-scroll { overflow:auto; max-height:300px; }
+  #diagnostics th { text-align:left; padding-right:16px; }
+  #diagnostics td { white-space:nowrap; font-variant-numeric:tabular-nums; }
+
 </style>
 </head>
 <body>
@@ -46,10 +57,34 @@
     <tr><td>Enter / Right Shift</td><td>Start / Select</td></tr>
     <tr><td>Q / W</td><td>L / R</td></tr>
   </table>
+  <section id="diagnostics" hidden>
+    <div class="debug-toolbar">
+      <h2>Session diagnostics</h2>
+      <label><input id="debug-enabled" type="checkbox" checked> Collect diagnostics</label>
+      <button id="export-diagnostics">Export JSON</button>
+    </div>
+    <p class="debug-note">Input RTT is browser → agent → browser. Accepted means validated and handed to the controller state;
+      short releases can be deferred by MIN_HOLD_MS. These measurements do not include RetroArch polling, encoding, or screen display latency.</p>
+    <p id="diagnostic-health" class="debug-note">Waiting for diagnostic replies</p>
+    <div id="metrics"></div>
+    <p><b>Agent held buttons:</b> <span id="agent-buttons">Waiting for agent reply</span></p>
+    <p><b>Agent axes (Linux range):</b> <span id="agent-axes">—</span></p>
+    <p><b>Pending minimum-hold releases:</b> <span id="agent-pending">none</span></p>
+    <p class="debug-note">Agent state is sampled on replies, including heartbeats every 2s. Input counts reset on reconnect.
+      Video counts cover the current stream/player. Missing browser metrics show —.
+      Dropped receiver frames and lost RTP packets are different; this cannot count frames lost before MediaMTX.
+      Background tabs can delay sampling and inflate RTT. p95 covers the last 120 replies.</p>
+    <h3>Agent-received input · last 50 replies</h3>
+    <div class="event-scroll"><table>
+      <thead><tr><th>Time</th><th>Sequence</th><th>Input</th><th>Agent result</th><th>RTT</th></tr></thead>
+      <tbody id="input-events"></tbody>
+    </table></div>
+  </section>
 </main>
 
 <script type="module">
 import { InputClient } from "./input-client.js";
+import { mountDiagnostics } from "./diagnostics.js";
 
 const SESSIONS = { snes: { port: 8765 }, gba: { port: 8766 } };
 const $ = (id) => document.getElementById(id);
@@ -110,6 +145,7 @@ function startInput() {
       if (!response.ok) throw new Error(`Token ${response.status}`);
       return response.text();
     },
+    diagnostics: $("debug-enabled").checked,
     onGamepad: (s) => setStatus("st-pad", s),
     onStatus: (s) => setStatus("st-input", s,
       s === "connected" ? "ok" : s === "another-controller-active" ? "bad" : "warn"),
@@ -131,6 +167,7 @@ $("unmute").addEventListener("click", (e) => {
   video.muted = !video.muted; e.target.textContent = video.muted ? "Unmute" : "Mute"; e.target.blur();
 });
 
+mountDiagnostics({ getClient: () => client, getPeer: () => pc, video, getSession: () => session });
 selectSession("snes");
 </script>
 </body>

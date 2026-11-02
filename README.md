@@ -12,7 +12,9 @@ RetroArch SNES/GBA ── RTMP ── MediaMTX ── WebRTC ── browser
 Each session runs its input agent and RetroArch in the same container. The
 browser combines keyboard and standard physical gamepad input into a versioned
 logical controller protocol. The agent authenticates the connection, validates
-messages, and creates a Linux virtual gamepad that RetroArch reads through udev.
+messages, and creates a Linux virtual gamepad that RetroArch reads through its udev joypad driver. Keyboard/mouse input uses
+the private Xvfb display (`input_driver = "x"`) so host typing cannot bypass the
+browser and trigger RetroArch pause/reset/menu hotkeys.
 
 ## Layout
 
@@ -139,13 +141,53 @@ button taps across RetroArch polling frames; adjust it for your latency needs.
 python3 -m venv .venv
 .venv/bin/pip install -r input-agent/requirements.txt
 .venv/bin/python -m unittest discover -s input-agent/tests -t input-agent -v
-node --test input-agent/tests/test_browser.mjs
+node --test input-agent/tests/*.mjs
 ```
 
 Python tests cover protocol/state/auth and real loopback WebSocket connections
 without evdev or uinput. Browser tests cover feedback filtering, unplug cleanup,
 focus loss, and stopped connection attempts. Full gameplay needs the Linux
 container and browser; unit tests do not establish end-to-end latency or mapping.
+
+## Live diagnostics
+
+The browser UI includes a **Session diagnostics** panel, enabled by default.
+Rebuild/recreate the emulator container after updating the agent, then reload the
+page (a hard refresh may be needed for cached JavaScript):
+
+```bash
+docker compose up --build mediamtx retroarch-snes
+python3 input-agent/dev-server.py
+```
+
+The panel shows:
+
+- Agent-received input events with sequence numbers and accepted/invalid/rate-limited results.
+- The agent's held buttons, normalized Linux axis values, and minimum-hold pending releases.
+- Browser-to-agent round-trip time, p95 across the last 120 replies, and agent handling time.
+- Sent/replied/pending/unacknowledged counts, plus server acceptance and rejection counts.
+- Receiver FPS, video bitrate/resolution, received/decoded/dropped frames, video packet loss,
+  jitter, jitter buffer delay, frame decode time, freezes, and selected WebRTC connection RTT.
+
+**Export JSON** downloads a local snapshot, including up to 50 acknowledged input
+events. Tokens and connection URLs are not included. Uncheck **Collect diagnostics**
+to stop diagnostic acknowledgments and WebRTC polling while keeping gameplay input.
+
+Input RTT includes both network directions and scheduling; it is not one-way
+latency or input-to-screen latency. Agent acceptance means the event reached the
+controller state, not that RetroArch consumed it. Minimum-hold releases may still
+be pending when an acknowledgment is generated. State is refreshed on replies,
+including idle heartbeats every two seconds. Counts reset when input reconnects.
+Unacknowledged messages are not proof of lost inputs: a delayed reply, older
+agent, or disconnect can also explain them. Background tabs affect timers/RTT.
+
+WebRTC metrics use the [W3C statistics API](https://www.w3.org/TR/webrtc-stats/).
+Interval metrics are sampled once per second; the first sample establishes a
+baseline. Unsupported fields show `—`, rather than a misleading zero. Dropped
+receiver frames, player rendering drops, and lost RTP packets measure different
+things. These statistics cannot count frames lost inside RetroArch, its encoder,
+or the RTMP path before MediaMTX. True button-to-screen latency needs dedicated
+instrumentation or an external capture measurement.
 
 ## Device sharing and deployment limits
 

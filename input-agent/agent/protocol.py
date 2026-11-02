@@ -51,6 +51,9 @@ def parse(raw, max_bytes: int = 512):
     if type(msg.get("version")) is not int or msg["version"] != VERSION:
         raise ProtocolError("unsupported version")
 
+    if "seq" in msg and (type(msg["seq"]) is not int or not 0 <= msg["seq"] <= 2**53 - 1):
+        raise ProtocolError("seq must be a nonnegative safe integer")
+
     kind = msg.get("type")
     if kind == "button":
         name, pressed = msg.get("button"), msg.get("pressed")

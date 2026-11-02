@@ -20,8 +20,9 @@ const PAD_AXES = { 0: "left_x", 1: "left_y", 2: "right_x", 3: "right_y" };
 const DEADZONE = 0.15;
 
 export class InputClient {
-  constructor({ url, getToken, onStatus = () => {}, onGamepad = () => {} }) {
-    Object.assign(this, { url, getToken, onStatus, onGamepad });
+  constructor({ url, getToken, onStatus = () => {}, onGamepad = () => {}, diagnostics = false }) {
+    Object.assign(this, { url, getToken, onStatus, onGamepad, diagnostics });
+    this.resetDiagnostics();
     this.ws = null;
     this.retry = 0;
     this.stopped = false;
@@ -67,13 +68,17 @@ export class InputClient {
     } catch {
       return this.reconnect();
     }
-    this.ws.onopen = () => { this.retry = 0; this.releaseAll(); this.onStatus("connected"); };
+    this.ws.onopen = () => { this.retry = 0; this.resetDiagnostics(); this.releaseAll(); this.onStatus("connected"); };
     this.ws.onclose = (ev) => {
       if (this.stopped) return;
+      this.pending.clear();
+      this.remote = null;
+      this.rtts = [];
       this.onStatus(ev.code === 4409 ? "another-controller-active" : "disconnected");
       this.reconnect();
     };
     this.ws.onerror = () => {};
+    this.ws.onmessage = (ev) => this.receive(ev.data);
   }
 
   reconnect() {
@@ -83,10 +88,74 @@ export class InputClient {
     this.reconnectTimer = setTimeout(() => this.connect(), delay);
   }
 
-  send(msg) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ version: 1, ...msg }));
+  resetDiagnostics() {
+    this.seq = this.seq ?? 0;
+    this.pending = new Map();
+    this.rtts = [];
+    this.events = [];
+    this.sentCount = 0;
+    this.ackCount = 0;
+    this.expiredCount = 0;
+    this.remote = null;
+    this.lastAck = null;
+  }
+
+  expirePending(now = performance.now()) {
+    for (const [seq, item] of this.pending) {
+      if (now - item.at < 5000) break;
+      this.pending.delete(seq);
+      this.expiredCount++;
     }
+  }
+
+  send(msg) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    const envelope = { version: 1, ...msg };
+    if (this.diagnostics) {
+      const now = performance.now();
+      this.expirePending(now);
+      // Bound memory even if the server is old or fails to acknowledge.
+      if (this.pending.size >= 1024) {
+        this.pending.delete(this.pending.keys().next().value);
+        this.expiredCount++;
+      }
+      envelope.seq = ++this.seq;
+      this.pending.set(envelope.seq, { at: now, msg });
+      this.sentCount++;
+    }
+    this.ws.send(JSON.stringify(envelope));
+  }
+
+  receive(raw) {
+    let ack;
+    try { ack = JSON.parse(raw); } catch { return; }
+    if (!ack || ack.type !== "ack") return;
+    const item = this.pending.get(ack.seq);
+    if (!item) return;
+    this.pending.delete(ack.seq);
+    const now = performance.now();
+    const rtt = now - item.at;
+    this.rtts.push(rtt);
+    if (this.rtts.length > 120) this.rtts.shift();
+    this.ackCount++;
+    this.lastAck = now;
+    this.remote = ack;
+    if (item.msg.type !== "heartbeat") {
+      this.events.unshift({ seq: ack.seq, time: new Date().toLocaleTimeString(),
+        ...item.msg, status: ack.status, rtt });
+      this.events.length = Math.min(this.events.length, 50);
+    }
+  }
+
+  diagnosticsSnapshot() {
+    this.expirePending();
+    const sorted = [...this.rtts].sort((a, b) => a - b);
+    return { sent: this.sentCount, acknowledged: this.ackCount,
+      pending: this.pending.size, expired: this.expiredCount,
+      rtt: this.rtts.at(-1) ?? null,
+      p95: sorted.length ? sorted[Math.ceil(sorted.length * 0.95) - 1] : null,
+      ackAge: this.lastAck === null ? null : performance.now() - this.lastAck,
+      remote: this.remote, events: this.events };
   }
 
   // Send a button only if its merged (keyboard OR gamepad) state changed.

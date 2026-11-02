@@ -44,6 +44,11 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ProtocolError, msg=raw):
                 parse(raw)
 
+    def test_invalid_diagnostic_sequence(self):
+        for seq in (True, -1, 1.5, [], 2**53):
+            with self.assertRaises(ProtocolError):
+                parse(msg(type="heartbeat", seq=seq))
+
     def test_size_limit(self):
         with self.assertRaises(ProtocolError):
             parse(msg(type="heartbeat", pad="x" * 1000))

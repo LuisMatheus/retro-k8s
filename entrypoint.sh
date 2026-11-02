@@ -85,7 +85,10 @@ PADEOF
 
     cat >> /tmp/session.cfg <<CFGEOF
 
-input_driver = "udev"
+# Read keyboard/mouse only from this container's private Xvfb display.
+# udev as the general input driver also reads the host keyboard from /dev/input,
+# bypassing browser mappings and triggering pause/reset/menu hotkeys while typing.
+input_driver = "x"
 input_joypad_driver = "udev"
 input_autodetect_enable = "true"
 joypad_autoconfig_dir = "$AUTOCONFIG_DIR"

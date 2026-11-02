@@ -56,3 +56,33 @@ test('stopping during token fetch does not open a late socket', async () => {
   const old = c.ws; const connecting = c.connect(); c.stopped = true; resolve('token');
   await connecting; assert.equal(c.ws, old);
 });
+
+test('diagnostics tracks acknowledgments, rejects unknown replies and expires bounded pending messages', () => {
+  const c = client(); c.diagnostics = true;
+  c.send({ type: 'button', button: 'south', pressed: true });
+  const seq = c.messages.at(-1).seq;
+  c.receive('bad json');
+  c.receive(JSON.stringify({ type: 'ack', seq: seq + 10 }));
+  assert.equal(c.ackCount, 0);
+  c.receive(JSON.stringify({ type: 'ack', seq, status: 'accepted', state: {}, counters: {} }));
+  assert.equal(c.ackCount, 1);
+  assert.equal(c.pending.size, 0);
+  assert.equal(c.events[0].button, 'south');
+  assert.ok(c.diagnosticsSnapshot().p95 >= 0);
+  c.rtts = Array.from({ length: 100 }, (_, i) => i + 1);
+  assert.equal(c.diagnosticsSnapshot().p95, 95);
+  c.send({ type: 'heartbeat' });
+  c.expirePending(performance.now() + 6000);
+  assert.equal(c.expiredCount, 1);
+  const oldSeq = c.seq; c.resetDiagnostics();
+  c.send({ type: 'heartbeat' });
+  assert.ok(c.seq > oldSeq);
+  for (let i = 0; i < 1100; i++) c.send({ type: 'heartbeat' });
+  assert.equal(c.pending.size, 1024);
+});
+
+test('diagnostics disabled preserves legacy wire format', () => {
+  const c = client(); c.send({ type: 'heartbeat' });
+  assert.equal(c.messages[0].seq, undefined);
+  assert.equal(c.pending.size, 0);
+});

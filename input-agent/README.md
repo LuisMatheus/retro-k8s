@@ -12,7 +12,7 @@ From the repository root:
 python3 -m venv .venv
 .venv/bin/pip install -r input-agent/requirements.txt
 .venv/bin/python -m unittest discover -s input-agent/tests -t input-agent -v
-node --test input-agent/tests/test_browser.mjs
+node --test input-agent/tests/*.mjs
 ```
 
 The Python tests do not need evdev; the Docker image installs it from Ubuntu.
@@ -63,3 +63,17 @@ docker build -f input-agent/Dockerfile \
 The base must include the updated root `entrypoint.sh` and RTMP configuration.
 Compose uses the root multi-stage Dockerfile, so a separate base build is not
 required for normal use.
+
+## Diagnostic replies
+
+A client can add an optional nonnegative safe-integer `seq` to a version-1
+message. The agent echoes it in a version-1 `ack`, with `status` (`accepted`,
+`invalid`, or `rate_limited`), `processing_ms`, connection counters, and the
+current controller `state` (`buttons`, `axes`, `pending_releases`). Messages
+without `seq` keep their original behavior. Invalid messages also retain the
+existing error response; invalid sequence identifiers are not echoed.
+
+The browser uses its own monotonic clock to time replies. No clock synchronization
+is assumed. Replies indicate agent acceptance/controller state, not RetroArch
+poll completion. See the root README's live diagnostics section for metric
+scope and frame-loss/latency limitations.
