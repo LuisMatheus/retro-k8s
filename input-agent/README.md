@@ -17,14 +17,15 @@ From the repository root:
 python3 -m venv .venv
 .venv/bin/pip install -r input-agent/requirements.txt
 .venv/bin/python -m unittest discover -s input-agent/tests -t input-agent -v
-node --test input-agent/tests/*.mjs
+PYTHONPATH=frontend:input-agent .venv/bin/python -m unittest discover -s frontend/tests -t frontend -v
+node --test frontend/tests/*.mjs
 ```
 
 The Python tests do not need evdev; the Docker image installs it from Ubuntu.
 
 ## Frontend session discovery
 
-`dev-server.py` serves the browser and mints tokens. `SESSION_SOURCE` selects
+`frontend/dev-server.py` serves the browser and mints tokens. `SESSION_SOURCE` selects
 where sessions come from:
 
 - `kubernetes` lists `retrosessions.retro.k8s` in the Pod namespace with the
@@ -38,7 +39,7 @@ where sessions come from:
 - `auto` (default) chooses Kubernetes when service-account credentials exist,
   otherwise static.
 
-In Kubernetes, `k8s/snes/frontend-rbac.yaml` grants the `frontend` service
+In Kubernetes, `deploy/kubernetes/platform/frontend-rbac.yaml` grants the `frontend` service
 account `get`/`list` on `retrosessions`. `MEDIA_HOST` (default `mediamtx`) and
 `MEDIA_WHEP_PORT` (default `8889`) select the in-cluster MediaMTX WHEP endpoint.
 `/api/config` reports `mode: proxy` with only public phase/readiness details;
@@ -79,7 +80,7 @@ readable device, checks host udev metadata, and stops the sibling process when
 either the agent or RetroArch exits.
 
 For an existing compatible RetroArch base image, the standalone image is an
-alternative to the root multi-stage build:
+alternative to the shared RetroArch runtime build:
 
 ```bash
 docker build -f input-agent/Dockerfile \
@@ -87,8 +88,8 @@ docker build -f input-agent/Dockerfile \
   -t retro-k8s-poc/retroarch-input:latest input-agent
 ```
 
-The base must include the updated root `entrypoint.sh` and RTMP configuration.
-Compose uses the root multi-stage Dockerfile, so a separate base build is not
+The base must include `runtimes/retroarch/entrypoint.sh` and its RTMP configuration.
+Compose uses the runtime's multi-stage Dockerfile, so a separate base build is not
 required for normal use.
 
 ## Diagnostic replies

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
-repo_root=$(cd "$script_dir/../.." && pwd)
+repo_root=$(cd "$script_dir/../../.." && pwd)
 cd "$repo_root"
 
 profile=${MINIKUBE_PROFILE:-minikube}
@@ -15,7 +15,7 @@ attach=true
 
 usage() {
   cat <<'EOF'
-Usage: k8s/snes/deploy.sh [options]
+Usage: deploy/legacy/static-snes/deploy.sh [options]
 
   --rom PATH     ROM to expose read-only (default: $GAMES_DIR/snes/$SNES_ROM)
   --build        Rebuild the session and frontend images with Compose first
@@ -124,6 +124,9 @@ MIN_HOLD_MS=$min_hold
 ALLOWED_ORIGINS=$allowed_origins
 WEBRTC_HOST=$webrtc_host
 EOF
+cat > "$gen/platform.env" <<EOF
+WEBRTC_HOST=$webrtc_host
+EOF
 cat > "$gen/security-context.yaml" <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -139,15 +142,25 @@ spec:
           - $input_gid
         fsGroup: $gid
 EOF
-chmod 600 "$gen/secret.env" "$gen/session.env" "$gen/security-context.yaml"
+chmod 600 "$gen/secret.env" "$gen/session.env" "$gen/platform.env" "$gen/security-context.yaml"
 
 if $attach; then
-  if [[ -f $script_dir/.node-input-state ]]; then
+  state=$repo_root/deploy/kubernetes/local/.node-input-state
+  [[ -f $state ]] || state=$repo_root/k8s/local/.node-input-state
+  [[ -f $state ]] || state=$repo_root/k8s/snes/.node-input-state
+  if [[ -f $state ]]; then
+    # shellcheck disable=SC1090
+    source "$state"
+    if [[ $rom_dir != "$rom_parent" ]]; then
+      echo "Attached ROM directory is $rom_dir, but the legacy session needs $rom_parent." >&2
+      echo "Stop active sessions and detach before changing the attachment." >&2
+      exit 1
+    fi
     echo "Host input is already attached to the Minikube node."
-    echo "To change the ROM directory, run $script_dir/attach-node-input.sh detach first."
+    echo "To change the ROM directory, run $repo_root/deploy/kubernetes/local/attach-node-input.sh detach first."
   else
     ROM_DIR="$rom_parent" MINIKUBE_PROFILE="$profile" \
-      "$script_dir/attach-node-input.sh" attach
+      "$repo_root/deploy/kubernetes/local/attach-node-input.sh" attach
   fi
 fi
 
@@ -206,4 +219,4 @@ fi
 echo
 echo "Saves persist in PVC retro-k8s/snes-saves (mounted at /saves)."
 echo "Logs: kubectl --context $profile -n retro-k8s logs -f deployment/snes"
-echo "Run bash k8s/snes/browser.sh and open http://127.0.0.1:18000."
+echo "Run bash deploy/kubernetes/local/browser.sh and open http://127.0.0.1:18000."

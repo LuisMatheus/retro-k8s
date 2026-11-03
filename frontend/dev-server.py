@@ -9,7 +9,7 @@ SESSION_SOURCE selects discovery:
   auto       - kubernetes when service-account credentials are present,
                otherwise static. This is the default.
 
-Run from your project root:  python3 input-agent/dev-server.py
+Run from your project root:  python3 frontend/dev-server.py
 Reads INPUT_TOKEN_SECRET from the environment or a .env file. The token endpoint
 has NO authentication: never expose this server beyond localhost."""
 from __future__ import annotations
@@ -20,6 +20,7 @@ from http.server import ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "..", "input-agent"))
 from frontend import (  # noqa: E402
     KubeSessionSource,
     SessionRegistry,

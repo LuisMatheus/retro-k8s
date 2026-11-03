@@ -23,7 +23,7 @@ metadata:
   namespace: retro-k8s
 spec:
   console: snes
-  rom: Chrono Trigger (USA).sfc
+  rom: snes/Chrono Trigger (USA).sfc
   saveClaimName: chrono-trigger-saves
 ```
 
@@ -101,21 +101,27 @@ Prerequisites:
 
 ```bash
 bash operator/deploy.sh
+bash deploy/kubernetes/local/deploy-platform.sh
 ```
 
 The script builds `retro-k8s-poc/operator:pilot`, loads it into Minikube,
 reuses or creates `retro-session-secret`, attaches host input/ROM paths if they
 are not attached already, applies the CRD/RBAC/manager, and waits for the
 operator rollout. Host-specific UID/GID and input paths are passed through a
-generated overlay; `config/default` keeps checked-in pilot defaults.
+generated overlay; `deploy/kubernetes/operator/default` keeps checked-in pilot defaults.
+The platform script installs the shared frontend and MediaMTX with the
+Minikube IP advertised for WebRTC. It reuses the session Secret.
+
+The default library root is `~/Documents/games`, with ROMs under `snes/`
+and `gba/`. Session ROM paths are relative to that root.
 
 Options: `--no-build`, `--no-load`, `--no-attach`.
 
 Apply the sample session:
 
 ```bash
-kubectl apply -f operator/config/samples/chrono-trigger-saves.yaml
-kubectl apply -f operator/config/samples/retrosession-snes.yaml
+kubectl apply -f deploy/kubernetes/samples/snes/chrono-trigger-saves.yaml
+kubectl apply -f deploy/kubernetes/samples/snes/retrosession-snes.yaml
 kubectl -n retro-k8s get retrosession chrono-trigger -o yaml
 ```
 
@@ -149,26 +155,28 @@ The save PVC `chrono-trigger-saves` is retained.
 
 ## GBA
 
-The API already selects the `mgba` core for `console: gba`, but GBA has not
-been validated on the Minikube node yet. The current node attachment exposes
-only the SNES directory at `/run/retro-k8s-input/roms`. To test GBA, attach a
-library that contains both console folders:
+The API selects the `mgba` core for `console: gba`, but GBA has not yet been
+validated on the Minikube node. With the shared library attached, apply the
+GBA save claim and sample:
 
 ```bash
-ROM_DIR=$HOME/Documents/games bash k8s/snes/attach-node-input.sh detach
-ROM_DIR=$HOME/Documents/games bash k8s/snes/attach-node-input.sh attach
-```
-
-Then apply the GBA save claim and sample:
-
-```bash
-kubectl apply -f operator/config/samples/gba-saves.yaml
-kubectl apply -f operator/config/samples/retrosession-gba.yaml
+kubectl apply -f deploy/kubernetes/samples/gba/gba-saves.yaml
+kubectl apply -f deploy/kubernetes/samples/gba/retrosession-gba.yaml
 ```
 
 The sample uses `rom: gba/Pokemon - Emerald Version (USA, Europe).gba`. Adjust
-the filename to the ROM in the library. Detach the input paths before deleting
-the session Pods.
+the filename to the ROM in the library.
+
+### Existing SNES-only attachment
+
+Older deployments attached `~/Documents/games/snes` as the library root and
+used bare filenames in existing `RetroSession` objects. The attachment script
+still recognizes the old state file. Before switching to the shared library,
+save progress and stop all sessions using the existing attachment. Detach it
+with `bash deploy/kubernetes/local/attach-node-input.sh detach`, then attach the shared root
+with `bash deploy/kubernetes/local/attach-node-input.sh attach`. Update existing SNES
+resources to prefix their ROM path with `snes/` before starting them again.
+Save PVCs remain separate and should be retained during this migration.
 
 ## Pilot limitations
 

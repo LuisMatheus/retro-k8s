@@ -1,8 +1,9 @@
 # retro-k8s-poc
 
-Headless RetroArch sessions with browser video and controller input. Docker
-Compose is the development setup; a `RetroSession` operator runs SNES sessions
-on Minikube and the frontend discovers them through the Kubernetes API.
+Headless emulator sessions with browser video and controller input. The
+`RetroSession` operator manages sessions on Kubernetes, and the frontend
+discovers them through the Kubernetes API. A Docker Compose stack is available
+for local development.
 
 ```text
 RetroArch SNES/GBA ── RTMP ── MediaMTX ── WebRTC ── browser
@@ -19,19 +20,29 @@ browser and trigger RetroArch pause/reset/menu hotkeys.
 
 ## Layout
 
-- `Dockerfile`: builds RetroArch v1.22.2 and Snes9x/mGBA cores, then adds the agent.
-- `compose.yaml`: browser/token server, MediaMTX, and two emulator sessions.
-- `entrypoint.sh`: generates RetroArch config/autoconfiguration and starts Xvfb.
-- `input-agent/agent/`: authentication, protocol, state, WebSocket server, uinput.
-- `input-agent/input-wrapper.sh`: starts the agent before RetroArch and supervises both.
-- `input-agent/browser/`: WebRTC player and keyboard/gamepad client.
-- `input-agent/dev-server.py`: localhost development UI and short-lived token endpoint.
-- `input-agent/frontend.py`: RetroSession discovery and same-origin input/WHEP proxy.
-- `retroarch/rtmp.cfg`: H.264/AAC RTMP encoder settings.
-- `mediamtx/mediamtx.yml`: RTMP ingest and WebRTC playback.
-- `k8s/input-probe/`: disposable Minikube virtual-controller probe.
-- `k8s/snes/`: static Kustomize single-SNES pilot with a read-only ROM and save PVC.
-- `operator/`: `RetroSession` CRD, Go controller, manifests and verification scripts.
+- `operator/` contains the `RetroSession` API, controller and operator verification.
+- `deploy/kubernetes/operator/` contains the CRD, RBAC and operator Deployment.
+- `deploy/kubernetes/samples/` contains SNES and GBA session examples.
+- `deploy/kubernetes/platform/` contains shared frontend and MediaMTX resources.
+- `deploy/kubernetes/local/` contains Minikube attachment, browser and probe tools.
+- `deploy/legacy/static-snes/` contains the original static SNES pilot.
+- `runtimes/retroarch/` contains the shared RetroArch image, startup script and
+  RTMP settings for its Snes9x and mGBA cores.
+- `input-agent/` contains the virtual gamepad agent and its tests.
+- [`frontend/`](frontend/README.md) contains the browser interface, discovery/proxy server and tests.
+- `deploy/compose/` contains the optional Docker Compose stack and its MediaMTX
+  configuration. The root `compose.yaml` is its compatibility entry point.
+
+For Kubernetes setup and the operator API, start with
+[the operator instructions](operator/README.md). The
+[single-session pilot](deploy/legacy/static-snes/README.md) documents local browser access.
+
+To add another Libretro core, add it to the RetroArch runtime image and extend
+the operator's console API, core mapping and tests. A standalone emulator with
+a different startup process belongs in a separate directory under `runtimes/`;
+integrating it also requires a corresponding operator workload implementation.
+The operator currently assumes RetroArch, so adding a directory alone does not
+make a new runtime available.
 
 ## Linux host setup
 
@@ -88,11 +99,11 @@ the device-sharing limitation below. The build supports Linux AMD64 and ARM64.
 To build only the original emulator image, use:
 
 ```bash
-docker build --target retroarch-base -t retro-k8s-poc/retroarch:latest .
+docker build -f runtimes/retroarch/Dockerfile --target retroarch-base -t retro-k8s-poc/retroarch:latest .
 ```
 
 Compose starts the browser UI and development token endpoint automatically.
-If you previously ran `python3 input-agent/dev-server.py`, stop that process
+If you previously ran `python3 frontend/dev-server.py`, stop that process
 with Ctrl+C first so the frontend container can bind localhost:8000.
 
 Open [the controller UI](http://localhost:8000). Select SNES or GBA, click Unmute
@@ -144,7 +155,8 @@ button taps across RetroArch polling frames; adjust it for your latency needs.
 python3 -m venv .venv
 .venv/bin/pip install -r input-agent/requirements.txt
 .venv/bin/python -m unittest discover -s input-agent/tests -t input-agent -v
-node --test input-agent/tests/*.mjs
+PYTHONPATH=frontend:input-agent .venv/bin/python -m unittest discover -s frontend/tests -t frontend -v
+node --test frontend/tests/*.mjs
 ```
 
 Python tests cover protocol/state/auth and real loopback WebSocket connections
@@ -267,7 +279,7 @@ follows readiness changes.
    privileged access required for this trusted local pilot. **Verified on
    Minikube on November 2, 2026:** the regular Pod could not open `/dev/uinput`;
    the privileged Pod passed as the non-root session user with the live input
-   paths attached. Follow the [input probe instructions](k8s/input-probe/README.md)
+   paths attached. Follow the [input probe instructions](deploy/kubernetes/local/input-probe/README.md)
    to reproduce both results.
 
 2. **Deploy one SNES session with static manifests.** Use Kustomize to deploy
@@ -277,11 +289,11 @@ follows readiness changes.
    Deployment, a Kubernetes Secret for token signing, and a unique pad name so
    the pilot can run alongside Compose. This step passes when the game starts,
    RetroArch selects the correct pad, and the save volume survives Pod replacement.
-   **Verified on Minikube on November 2, 2026:** `k8s/snes/deploy.sh` started
+   **Verified on Minikube on November 2, 2026:** `deploy/legacy/static-snes/deploy.sh` started
    the game from a read-only ROM mount, logs reported
-   `Retro-K8s Pad snes-k8s configured in port 1`, and `k8s/snes/verify.sh`
+   `Retro-K8s Pad snes-k8s configured in port 1`, and `deploy/legacy/static-snes/verify.sh`
    confirmed the ROM mount rejects writes and a `/saves` marker survived Pod
-   replacement. Follow the [pilot instructions](k8s/snes/README.md).
+   replacement. Follow the [pilot instructions](deploy/legacy/static-snes/README.md).
 
 3. **Make the session playable from the local browser.** Make the frontend's
    session list and endpoints configurable. Use separate loopback TCP ports for

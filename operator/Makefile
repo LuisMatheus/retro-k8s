@@ -8,8 +8,8 @@ generate:
 
 manifests:
 	$(CONTROLLER_GEN) crd rbac:roleName=retrosession-operator paths=./... \
-		output:crd:artifacts:config=config/crd/bases \
-		output:rbac:artifacts:config=config/rbac
+		output:crd:artifacts:config=../deploy/kubernetes/operator/crd/bases \
+		output:rbac:artifacts:config=../deploy/kubernetes/operator/rbac
 
 tidy:
 	go mod tidy

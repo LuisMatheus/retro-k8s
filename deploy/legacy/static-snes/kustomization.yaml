@@ -4,18 +4,16 @@ kind: Kustomization
 namespace: retro-k8s
 
 resources:
-  - namespace.yaml
-  - mediamtx.yaml
-  - frontend-rbac.yaml
-  - frontend.yaml
+  - ../../kubernetes/platform
   - audio-relay.yaml
   - saves-pvc.yaml
   - snes.yaml
 
 configMapGenerator:
-  - name: mediamtx-config
-    files:
-      - mediamtx.yml
+  - name: platform-settings
+    behavior: replace
+    envs:
+      - generated/platform.env
   - name: snes-session
     envs:
       - generated/session.env

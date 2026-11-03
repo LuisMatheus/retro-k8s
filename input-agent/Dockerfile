@@ -1,5 +1,5 @@
 # Wraps your existing retro-k8s-poc/retroarch image with the input agent.
-# Assumes a Debian/Ubuntu base. Build the base first (see compose.yaml: profile "build").
+# Assumes a Debian/Ubuntu base. Build the RetroArch base image first.
 ARG BASE_IMAGE=retro-k8s-poc/retroarch:latest
 FROM ${BASE_IMAGE}
 

@@ -69,8 +69,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 RUN mkdir -p /saves/states /bios /tmp/.X11-unix \
     && chmod 1777 /tmp/.X11-unix
 
-COPY entrypoint.sh /usr/local/bin/retroarch-entrypoint
-COPY retroarch/rtmp.cfg /etc/retroarch/rtmp.cfg
+COPY runtimes/retroarch/entrypoint.sh /usr/local/bin/retroarch-entrypoint
+COPY runtimes/retroarch/rtmp.cfg /etc/retroarch/rtmp.cfg
 
 RUN chmod +x /usr/local/bin/retroarch-entrypoint
 

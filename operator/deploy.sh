@@ -10,7 +10,7 @@ profile=${MINIKUBE_PROFILE:-minikube}
 namespace=retro-k8s
 node_input_root=${NODE_INPUT_ROOT:-/run/retro-k8s-input}
 games_dir=${GAMES_DIR:-$HOME/Documents/games}
-rom_dir=${ROM_DIR:-$games_dir/snes}
+rom_dir=${ROM_DIR:-$games_dir}
 operator_image=${OPERATOR_IMAGE:-retro-k8s-poc/operator:pilot}
 session_image=${SESSION_IMAGE:-retro-k8s-poc/retroarch-input:pilot}
 build=true
@@ -30,7 +30,7 @@ Environment:
   MINIKUBE_PROFILE  Minikube profile (default: minikube)
   OPERATOR_IMAGE    Operator image (default: retro-k8s-poc/operator:pilot)
   SESSION_IMAGE     Default emulator image for sessions
-  ROM_DIR           ROM directory to attach (default: ~/Documents/games/snes)
+  ROM_DIR           ROM library root to attach (default: ~/Documents/games)
   NODE_INPUT_ROOT   Node hostPath root (default: /run/retro-k8s-input)
   PUID/PGID/INPUT_GID, LOG_LEVEL, MIN_HOLD_MS
                     Session identity and input defaults, read from .env first
@@ -81,19 +81,23 @@ min_hold=$(from_env_or_file MIN_HOLD_MS); min_hold=${min_hold:-40}
 [[ $min_hold =~ ^[0-9]+$ ]] || { echo "MIN_HOLD_MS must be a number." >&2; exit 1; }
 
 if $attach; then
-  state=$repo_root/k8s/snes/.node-input-state
+  state=$repo_root/deploy/kubernetes/local/.node-input-state
+  [[ -f $state ]] || state=$repo_root/k8s/local/.node-input-state
+  [[ -f $state ]] || state=$repo_root/k8s/snes/.node-input-state
   if [[ -f $state ]]; then
+    requested_rom_dir=$(cd "$rom_dir" && pwd)
     # shellcheck disable=SC1090
     source "$state"
     node_input_root=${root:-$node_input_root}
-    if [[ -n ${rom_dir:-} && ${rom_dir:-} != "${ROM_DIR:-$rom_dir}" ]]; then
+    if [[ -n ${rom_dir:-} && ${rom_dir:-} != "$requested_rom_dir" ]]; then
       echo "Host input is already attached with ROM directory: $rom_dir" >&2
-      echo "Run k8s/snes/attach-node-input.sh detach first to change it." >&2
+      echo "Stop active sessions, then run deploy/kubernetes/local/attach-node-input.sh detach and reattach the requested ROM library." >&2
+      exit 1
     fi
     echo "Host input is already attached to the Minikube node."
   else
     ROM_DIR="$rom_dir" NODE_INPUT_ROOT="$node_input_root" MINIKUBE_PROFILE="$profile" \
-      "$repo_root/k8s/snes/attach-node-input.sh" attach
+      "$repo_root/deploy/kubernetes/local/attach-node-input.sh" attach
   fi
 fi
 
@@ -105,7 +109,7 @@ if $load; then
   minikube -p "$profile" image load --daemon "$operator_image"
 fi
 
-kubectl --context "$profile" apply -f "$script_dir/config/default/namespace.yaml" >/dev/null
+kubectl --context "$profile" apply -f "$repo_root/deploy/kubernetes/operator/default/namespace.yaml" >/dev/null
 
 if kubectl --context "$profile" -n "$namespace" get secret retro-session-secret >/dev/null 2>&1; then
   echo "Using existing Secret $namespace/retro-session-secret"
@@ -122,7 +126,7 @@ fi
 
 # A generated overlay carries the host-specific identity and input paths, so
 # config/default stays usable with its checked-in pilot defaults.
-overlay=$(mktemp -d "$script_dir/config/.deploy-XXXXXX")
+overlay=$(mktemp -d "$repo_root/deploy/kubernetes/operator/.deploy-XXXXXX")
 trap 'rm -rf "$overlay"' EXIT
 cat > "$overlay/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -181,6 +185,6 @@ echo
 kubectl --context "$profile" -n "$namespace" get deployment/retrosession-operator
 echo
 echo "Apply a session with:"
-echo "  kubectl --context $profile apply -f $script_dir/config/samples/chrono-trigger-saves.yaml"
-echo "  kubectl --context $profile apply -f $script_dir/config/samples/retrosession-snes.yaml"
+echo "  kubectl --context $profile apply -f $repo_root/deploy/kubernetes/samples/snes/chrono-trigger-saves.yaml"
+echo "  kubectl --context $profile apply -f $repo_root/deploy/kubernetes/samples/snes/retrosession-snes.yaml"
 echo "Then run: bash $script_dir/verify.sh"

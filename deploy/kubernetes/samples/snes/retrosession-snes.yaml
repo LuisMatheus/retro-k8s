@@ -1,0 +1,10 @@
+# The ROM path is relative to the shared ROM library root.
+apiVersion: retro.k8s/v1alpha1
+kind: RetroSession
+metadata:
+  name: chrono-trigger
+  namespace: retro-k8s
+spec:
+  console: snes
+  rom: snes/Chrono Trigger (USA).sfc
+  saveClaimName: chrono-trigger-saves

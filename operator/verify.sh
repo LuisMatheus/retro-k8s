@@ -4,6 +4,7 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=$(cd "$script_dir/.." && pwd)
 profile=${MINIKUBE_PROFILE:-minikube}
 namespace=retro-k8s
 session=chrono-trigger
@@ -50,7 +51,7 @@ running_pod() {
 
 "${kube[@]}" rollout status deployment/retrosession-operator --timeout=120s >/dev/null
 
-"${kube[@]}" apply -f "$script_dir/config/samples/chrono-trigger-saves.yaml" >/dev/null
+"${kube[@]}" apply -f "$repo_root/deploy/kubernetes/samples/snes/chrono-trigger-saves.yaml" >/dev/null
 
 # Start from a clean session but keep the save claim: this also makes a re-run
 # prove that a previous run's saves are reused.
@@ -63,7 +64,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 
-"${kube[@]}" apply -f "$script_dir/config/samples/retrosession-snes.yaml" >/dev/null
+"${kube[@]}" apply -f "$repo_root/deploy/kubernetes/samples/snes/retrosession-snes.yaml" >/dev/null
 wait_ready
 pass "session $session is Ready"
 
@@ -114,7 +115,7 @@ for _ in $(seq 1 60); do
 done
 grep -q "Starting RetroArch" <<<"$logs" ||
   fail "RetroArch did not start in Pod $pod"
-grep -q "ROM: /roms/Chrono Trigger (USA).sfc" <<<"$logs" ||
+grep -q "ROM: /roms/snes/Chrono Trigger (USA).sfc" <<<"$logs" ||
   fail "Pod $pod did not use the expected ROM path"
 pass "RetroArch started from the read-only ROM library"
 
@@ -168,7 +169,7 @@ done
   fail "save PVC $claim was deleted with the session"
 pass "session resources were garbage-collected; save PVC $claim was retained"
 
-"${kube[@]}" apply -f "$script_dir/config/samples/retrosession-snes.yaml" >/dev/null
+"${kube[@]}" apply -f "$repo_root/deploy/kubernetes/samples/snes/retrosession-snes.yaml" >/dev/null
 wait_ready
 reused_pod=$(running_pod)
 [[ -n $reused_pod ]] || fail "recreated session has no running Pod"

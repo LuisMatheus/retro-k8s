@@ -1,0 +1,10 @@
+# The ROM path is relative to the shared ROM library root.
+apiVersion: retro.k8s/v1alpha1
+kind: RetroSession
+metadata:
+  name: pokemon-emerald
+  namespace: retro-k8s
+spec:
+  console: gba
+  rom: gba/Pokemon - Emerald Version (USA, Europe).gba
+  saveClaimName: gba-saves

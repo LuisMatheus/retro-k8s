@@ -1,8 +1,8 @@
-# Single-SNES Minikube pilot
+# Legacy static SNES Minikube pilot
 
-This is roadmap step 2: static Kustomize manifests for the frontend, MediaMTX
-and one combined RetroArch/input session. It runs beside Docker Compose because
-the pilot uses a different virtual pad name.
+This is the original static pilot. Its Kustomization includes the shared
+platform from `deploy/kubernetes/platform/` and adds one static RetroArch/input session.
+For new sessions use the [operator](../../../operator/README.md).
 
 The Pod mounts one user-supplied ROM directory read-only at `/roms` and a
 `ReadWriteOnce` PVC at `/saves`. The signing secret is a Kubernetes Secret, and
@@ -25,14 +25,14 @@ docker compose build retroarch-snes frontend
 From the project root:
 
 ```bash
-bash k8s/snes/deploy.sh
+bash deploy/legacy/static-snes/deploy.sh
 ```
 
 The local browser forwards can run automatically as a user service. The
 provided unit assumes the checkout is at `~/Documents/retro-k8s`:
 
 ```bash
-install -m 0644 k8s/snes/retro-k8s-browser.service ~/.config/systemd/user/
+install -m 0644 deploy/kubernetes/local/retro-k8s-browser.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now retro-k8s-browser.service
 ```
@@ -55,7 +55,7 @@ The script:
 
 1. Tags the local images as `pilot` and loads them into the Minikube profile,
    along with `bluenviron/mediamtx:1`.
-2. Generates `k8s/snes/generated/` (Secret values, session settings and the
+2. Generates `deploy/legacy/static-snes/generated/` (Secret values, session settings and the
    UID/GID patch). This directory and `.node-input-state` are ignored by Git.
 3. Clones the host's live `/dev/uinput`, `/dev/input`, `/run/udev/data` and the
    ROM's parent directory into `/run/retro-k8s-input` on the Minikube node.
@@ -64,9 +64,9 @@ The script:
 Useful options:
 
 ```bash
-bash k8s/snes/deploy.sh --rom ~/Documents/games/snes/other-game.sfc
-bash k8s/snes/deploy.sh --build          # rebuild images first
-bash k8s/snes/deploy.sh --no-attach      # node paths already attached
+bash deploy/legacy/static-snes/deploy.sh --rom ~/Documents/games/snes/other-game.sfc
+bash deploy/legacy/static-snes/deploy.sh --build          # rebuild images first
+bash deploy/legacy/static-snes/deploy.sh --no-attach      # node paths already attached
 ```
 
 The default ROM is `$HOME/Documents/games/snes/$SNES_ROM`. Only the ROM's parent
@@ -74,14 +74,14 @@ directory is exposed to the node, read-only. If you change ROM directories,
 detach and reattach first:
 
 ```bash
-bash k8s/snes/attach-node-input.sh detach
-bash k8s/snes/deploy.sh --rom /path/to/roms/other-game.sfc
+bash deploy/kubernetes/local/attach-node-input.sh detach
+bash deploy/legacy/static-snes/deploy.sh --rom /path/to/roms/other-game.sfc
 ```
 
 ## Verify
 
 ```bash
-bash k8s/snes/verify.sh
+bash deploy/legacy/static-snes/verify.sh
 ```
 
 The check passes when:
@@ -103,11 +103,12 @@ kubectl -n retro-k8s port-forward svc/snes-input 8765:8765
 ## Stop
 
 ```bash
-bash k8s/snes/teardown.sh
+bash deploy/legacy/static-snes/teardown.sh
 ```
 
-This removes the workloads and detaches the node input mounts but keeps the
-namespace and save PVC. Add `--delete-data` to delete both.
+This removes the shared frontend and MediaMTX as well as the static workload,
+and detaches the node input mounts. Stop other sessions first. The namespace and
+save PVC are kept unless `--delete-data` is specified.
 
 ## Notes and limits
 

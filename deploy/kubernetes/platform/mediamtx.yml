@@ -1,4 +1,4 @@
-# Kubernetes copy of mediamtx/mediamtx.yml, mounted at /mediamtx.yml.
+# Kubernetes MediaMTX configuration, mounted at /mediamtx.yml.
 logLevel: info
 
 rtmp: yes

@@ -33,7 +33,7 @@ spec:
             - name: MTX_WEBRTCADDITIONALHOSTS
               valueFrom:
                 configMapKeyRef:
-                  name: snes-session
+                  name: platform-settings
                   key: WEBRTC_HOST
           ports:
             - name: rtmp

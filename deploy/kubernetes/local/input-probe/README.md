@@ -13,16 +13,16 @@ the image is missing, build it first with `docker compose build retroarch-snes`.
 export MINIKUBE_PROFILE=minikube
 minikube start -p "$MINIKUBE_PROFILE" --driver=docker --keep-context
 minikube -p "$MINIKUBE_PROFILE" image load --daemon retro-k8s-poc/retroarch-input:latest
-bash k8s/input-probe/run.sh
+bash deploy/kubernetes/local/input-probe/run.sh
 ```
 
 On a Docker node missing the live event directory or udev metadata, use the
 temporary attachment wrapper instead of the last command:
 
 ```bash
-bash k8s/input-probe/with-node-input.sh
+bash deploy/kubernetes/local/input-probe/with-node-input.sh
 # If the device-open check fails, compare on the trusted local pilot:
-bash k8s/input-probe/with-node-input.sh --privileged
+bash deploy/kubernetes/local/input-probe/with-node-input.sh --privileged
 ```
 
 The wrapper starts a short-lived helper from the local session image and gives
@@ -41,7 +41,7 @@ single-session pilot.
 The launcher defaults to your current UID/GID and the numeric group owning
 `/dev/uinput`. If Compose uses different IDs, export `PUID`, `PGID` and
 `INPUT_GID` with the corresponding values from your local configuration.
-Use `bash k8s/input-probe/run.sh --render` to inspect the Pod manifest.
+Use `bash deploy/kubernetes/local/input-probe/run.sh --render` to inspect the Pod manifest.
 
 The launcher checks the host and node paths, then creates a uniquely named
 Pod in the profile's `default` namespace. The probe creates one pad and opens
@@ -81,7 +81,7 @@ PASS: virtual controller created, tagged, read and removed
   host uinput device and read the event nodes. If those permissions match but
   the Pod still cannot open the devices, the container runtime may be denying
   device access. On the trusted local pilot only, retry with
-  `bash k8s/input-probe/run.sh --privileged` and record both outcomes. This
+  `bash deploy/kubernetes/local/input-probe/run.sh --privileged` and record both outcomes. This
   enables privileged container access while keeping the same non-root UID/GID.
 - **Pod cannot start.** Check the Pod description printed on timeout. For
   `ErrImageNeverPull`, load the local session image into the selected profile.

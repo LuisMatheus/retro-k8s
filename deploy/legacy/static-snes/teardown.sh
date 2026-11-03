@@ -22,7 +22,7 @@ kube=(kubectl --context "$profile" -n retro-k8s)
 "${kube[@]}" wait --for=delete pod -l app.kubernetes.io/part-of=retro-k8s \
   --timeout=60s >/dev/null 2>&1 || true
 
-if bash "$script_dir/attach-node-input.sh" detach; then
+if bash "$script_dir/../../kubernetes/local/attach-node-input.sh" detach; then
   :
 else
   echo "Could not detach all node input mounts; inspect the node before retrying." >&2
@@ -30,7 +30,7 @@ fi
 
 if $delete_data; then
   kubectl --context "$profile" delete namespace retro-k8s --ignore-not-found
-  rm -rf "$script_dir/generated" "$script_dir/.node-input-state"
+  rm -rf "$script_dir/generated"
   echo "Deleted the namespace, save PVC and generated files."
 else
   echo "Kept PVC retro-k8s/snes-saves and the namespace."

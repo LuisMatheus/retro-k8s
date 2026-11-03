@@ -5,7 +5,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=%h/Documents/retro-k8s
-ExecStart=/bin/bash %h/Documents/retro-k8s/k8s/snes/browser.sh
+ExecStart=/bin/bash %h/Documents/retro-k8s/deploy/kubernetes/local/browser.sh
 Restart=always
 RestartSec=5
 
