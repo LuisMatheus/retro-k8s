@@ -15,6 +15,9 @@ async def amain() -> None:
     cfg = Config.from_env()
     pad = VirtualGamepad(cfg)
     pad.open()  # fails loudly if /dev/uinput is unavailable
+    if os.environ.get("INPUT_DEVICE_SYSNAME_FILE"):
+        with open(os.environ["INPUT_DEVICE_SYSNAME_FILE"], "w") as output:
+            output.write(pad.sysname())
     loop = asyncio.get_running_loop()
     state = ControllerState(pad, min_hold=cfg.min_hold_ms / 1000, call_later=loop.call_later)
 

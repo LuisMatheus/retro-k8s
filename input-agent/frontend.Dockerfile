@@ -3,6 +3,7 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY input-agent/dev-server.py /app/dev-server.py
+COPY input-agent/frontend.py /app/frontend.py
 COPY input-agent/browser/ /app/browser/
 COPY input-agent/agent/__init__.py input-agent/agent/auth.py /app/agent/
 ENV PYTHONUNBUFFERED=1 DEV_HOST=0.0.0.0 DEV_PORT=8000

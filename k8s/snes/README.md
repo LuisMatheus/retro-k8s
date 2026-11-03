@@ -37,11 +37,15 @@ systemctl --user daemon-reload
 systemctl --user enable --now retro-k8s-browser.service
 ```
 
-Open http://127.0.0.1:18000 and click Unmute. The browser uses localhost TCP
-forwards for the UI, WHEP signaling and controller input. WebRTC media uses
-UDP NodePort 30189 on the Minikube IP. An FFmpeg relay copies H.264 video and
-converts AAC to Opus for the `snes` playback path. The development token
-issuer is unauthenticated, so keep these forwards bound to localhost.
+Open http://127.0.0.1:18000 and click Unmute. `browser.sh` now forwards only
+the frontend. The frontend discovers `RetroSession` resources with its service
+account and proxies WHEP signaling and the input WebSocket on the same origin.
+WebRTC media still uses UDP NodePort 30189 on the Minikube IP. An FFmpeg relay
+copies H.264 video and converts AAC to Opus for the static `snes` playback path.
+The static `snes` Deployment from this pilot is not listed by the
+operator-aware frontend; create a `RetroSession` for browser play. The
+development token issuer is unauthenticated, so keep the forward bound to
+localhost.
 The service reconnects its forwards after a Pod replacement. Minikube itself
 must be running, and the temporary node attachments must be restored if the
 Minikube node has restarted. Stop automatic forwarding with

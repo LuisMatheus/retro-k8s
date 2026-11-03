@@ -1,5 +1,5 @@
 """The only module that imports evdev. Maps logical names to Linux codes."""
-from evdev import AbsInfo, UInput
+from evdev import AbsInfo, UInput, _uinput
 from evdev import ecodes as e
 
 from .config import Config
@@ -38,6 +38,9 @@ class VirtualGamepad:
         if self._ui:
             self._ui.close()
             self._ui = None
+
+    def sysname(self) -> str:
+        return _uinput.get_sysname(self._ui.fd)
 
     # --- Sink interface ---
     def set_button(self, name: str, pressed: bool) -> None:

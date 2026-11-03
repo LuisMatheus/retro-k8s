@@ -1,8 +1,8 @@
 # retro-k8s-poc
 
 Headless RetroArch sessions with browser video and controller input. Docker
-Compose is the development setup; a static Kustomize pilot runs one SNES session
-on Minikube. A Kubernetes operator is not implemented yet.
+Compose is the development setup; a `RetroSession` operator runs SNES sessions
+on Minikube and the frontend discovers them through the Kubernetes API.
 
 ```text
 RetroArch SNES/GBA ── RTMP ── MediaMTX ── WebRTC ── browser
@@ -26,10 +26,12 @@ browser and trigger RetroArch pause/reset/menu hotkeys.
 - `input-agent/input-wrapper.sh`: starts the agent before RetroArch and supervises both.
 - `input-agent/browser/`: WebRTC player and keyboard/gamepad client.
 - `input-agent/dev-server.py`: localhost development UI and short-lived token endpoint.
+- `input-agent/frontend.py`: RetroSession discovery and same-origin input/WHEP proxy.
 - `retroarch/rtmp.cfg`: H.264/AAC RTMP encoder settings.
 - `mediamtx/mediamtx.yml`: RTMP ingest and WebRTC playback.
 - `k8s/input-probe/`: disposable Minikube virtual-controller probe.
 - `k8s/snes/`: static Kustomize single-SNES pilot with a read-only ROM and save PVC.
+- `operator/`: `RetroSession` CRD, Go controller, manifests and verification scripts.
 
 ## Linux host setup
 
@@ -204,8 +206,10 @@ string, so avoid recording full URLs in proxy logs. Kubernetes device allocation
 and per-session isolation still need their own implementation.
 
 For LAN video, MediaMTX currently advertises `127.0.0.1`; configure the host LAN
-address in `webrtcAdditionalHosts`. The development UI assumes local HTTP media
-on port 8889 and local WebSocket input ports; it is not a production gateway.
+address in `webrtcAdditionalHosts`. Outside Kubernetes the development UI
+connects directly to local HTTP media on port 8889 and local WebSocket input
+ports; in Kubernetes it uses same-origin proxy routes. Neither mode is a
+production gateway.
 
 ## Stop
 
@@ -227,15 +231,30 @@ and gamepad input, session tokens, disconnect cleanup and browser diagnostics
 are implemented. All 20 Python tests and both Node test suites passed. GBA is
 configured but was offline during the check.
 
-Browser audio is the known playback gap. MediaMTX received AAC from RetroArch
-and skipped that track when serving WebRTC. Saves persist in per-console host
+Browser audio now carries Opus through the relay, but audible playback through
+the host speakers has not been confirmed. Saves persist in per-console host
 directories.
 
 The static Kustomize SNES pilot was also deployed to Minikube and passed its
 step 2 checks: the game started from a read-only ROM host mount, RetroArch
 selected the pilot pad for player 1, writes to the ROM mount failed, and a save
-marker survived Pod replacement. The `RetroSession` API and operator, browser
-playability in Kubernetes, and per-player isolation are still to be built.
+marker survived Pod replacement.
+
+On November 3, 2026, the `RetroSession` operator was deployed to Minikube and
+passed its SNES checks: a `RetroSession` created one emulator Deployment and one
+input Service, reported `Ready` with frontend endpoints, repaired a deleted
+Deployment, garbage-collected the session resources, and retained and reused the
+save PVC across `RetroSession` deletion and recreation. The frontend now lists
+`RetroSession` resources with its service account and proxies input WebSocket
+and WHEP signaling through same-origin routes, so the browser only needs the
+frontend port-forward. GBA validation, per-session audio relay, and per-player
+isolation are still to be built.
+
+On November 3, 2026, the operator-aware frontend was verified in Minikube:
+`/api/config` listed `chrono-trigger` with `mode: proxy`, `/api/token` minted a
+session token, and the proxy carried a WebSocket heartbeat to the input agent
+and a WHEP request to MediaMTX. The browser UI renders discovered sessions and
+follows readiness changes.
 
 ### Roadmap
 
@@ -285,3 +304,13 @@ playability in Kubernetes, and per-player isolation are still to be built.
    a session is deleted and recreated. Validate GBA as the second core. Before
    opening access to multiple players, add authenticated session routing,
    per-player save ownership and tested isolation between virtual controllers.
+   **Verified for SNES on Minikube on November 3, 2026:**
+   `operator/deploy.sh` deployed the controller and `operator/verify.sh`
+   confirmed creation, `Ready` status and endpoints, Deployment repair,
+   garbage-collection of the Deployment/Service, and save-PVC retention and
+   reuse across `RetroSession` deletion and recreation. **Frontend integration
+   was verified on Minikube on November 3, 2026:** the frontend service account
+   listed the `chrono-trigger` session, `/api/config` returned `mode: proxy`, and
+   the proxy forwarded both a WebSocket heartbeat to the input agent and a WHEP
+   offer to MediaMTX. GBA validation remains pending. Follow the
+   [operator instructions](operator/README.md).

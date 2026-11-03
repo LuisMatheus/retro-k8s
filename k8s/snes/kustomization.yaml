@@ -6,6 +6,7 @@ namespace: retro-k8s
 resources:
   - namespace.yaml
   - mediamtx.yaml
+  - frontend-rbac.yaml
   - frontend.yaml
   - audio-relay.yaml
   - saves-pvc.yaml

@@ -29,6 +29,7 @@ services:
     restart: unless-stopped
     environment:
       INPUT_TOKEN_SECRET: ${INPUT_TOKEN_SECRET:?set INPUT_TOKEN_SECRET in .env}
+      SESSION_SOURCE: static
       SESSIONS: snes,gba
     # The development token issuer has no user authentication. Keep it local.
     ports:

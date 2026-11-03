@@ -22,6 +22,28 @@ node --test input-agent/tests/*.mjs
 
 The Python tests do not need evdev; the Docker image installs it from Ubuntu.
 
+## Frontend session discovery
+
+`dev-server.py` serves the browser and mints tokens. `SESSION_SOURCE` selects
+where sessions come from:
+
+- `kubernetes` lists `retrosessions.retro.k8s` in the Pod namespace with the
+  mounted service-account token. The browser uses same-origin routes:
+  `/api/sessions/<name>/input` for the WebSocket and
+  `/api/sessions/<name>/whep` for WebRTC signaling. The proxy resolves the
+  upstream from `RetroSession.status.endpoints`, never from browser input.
+- `static` uses `SESSIONS`, `SNES_INPUT_PORT`, `GBA_INPUT_PORT`,
+  `INPUT_PORTS="name:port,..."` and `MEDIA_PORT`, and the browser connects
+  directly to those ports. This is the Docker Compose path.
+- `auto` (default) chooses Kubernetes when service-account credentials exist,
+  otherwise static.
+
+In Kubernetes, `k8s/snes/frontend-rbac.yaml` grants the `frontend` service
+account `get`/`list` on `retrosessions`. `MEDIA_HOST` (default `mediamtx`) and
+`MEDIA_WHEP_PORT` (default `8889`) select the in-cluster MediaMTX WHEP endpoint.
+`/api/config` reports `mode: proxy` with only public phase/readiness details;
+`/api/token` refuses unknown sessions and sessions that are not `Ready`.
+
 ## Protocol
 
 Messages use version 1 and logical names, never Linux event codes:

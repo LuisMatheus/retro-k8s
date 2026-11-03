@@ -1,0 +1,12 @@
+# The ROM path is relative to the operator's --rom-library-path.
+# With the pilot's default node attachment that directory is the SNES folder,
+# so the filename alone is correct.
+apiVersion: retro.k8s/v1alpha1
+kind: RetroSession
+metadata:
+  name: chrono-trigger
+  namespace: retro-k8s
+spec:
+  console: snes
+  rom: Chrono Trigger (USA).sfc
+  saveClaimName: chrono-trigger-saves

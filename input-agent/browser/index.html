@@ -12,14 +12,17 @@
   body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
   main { max-width:960px; margin:0 auto; padding:16px; }
   h1 { font-size:18px; margin:0 0 12px; }
-  .tabs { display:flex; gap:8px; margin-bottom:12px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
   button { font:inherit; padding:6px 14px; border:1px solid var(--mut); border-radius:6px;
            background:var(--card); color:var(--fg); cursor:pointer; }
   button.on { border-color:var(--ok); }
+  button.pending { opacity:.6; }
+  button:disabled { cursor:default; opacity:.5; }
   video { width:100%; background:#000; aspect-ratio:4/3; image-rendering:pixelated; border-radius:8px; }
   .status { display:flex; gap:16px; flex-wrap:wrap; margin:10px 0; color:var(--mut); }
   .status b { color:var(--fg); }
   .ok { color:var(--ok) !important; } .bad { color:var(--bad) !important; } .warn { color:var(--warn) !important; }
+  .empty { color:var(--mut); padding:24px; text-align:center; border:1px dashed var(--mut); border-radius:8px; }
   table { border-collapse:collapse; margin-top:8px; }
   td { padding:2px 14px 2px 0; color:var(--mut); }
   td:first-child { color:var(--fg); }
@@ -39,15 +42,15 @@
 <body>
 <main>
   <h1>Retro-K8s test client</h1>
-  <div class="tabs" id="tabs">
-    <button data-s="snes" class="on">SNES</button>
-    <button data-s="gba">GBA</button>
+  <div class="tabs" id="tabs"></div>
+  <div class="tabs" id="controls">
     <button id="unmute">Unmute</button>
   </div>
   <video id="video" autoplay playsinline muted></video>
   <div class="status">
-    <span>video: <b id="st-video">connecting</b></span>
-    <span>input: <b id="st-input">connecting</b></span>
+    <span>session: <b id="st-session">discovering</b></span>
+    <span>video: <b id="st-video">idle</b></span>
+    <span>input: <b id="st-input">idle</b></span>
     <span>gamepad: <b id="st-pad">none (press a button on it)</b></span>
   </div>
   <table>
@@ -84,32 +87,75 @@
 
 <script type="module">
 import { InputClient } from "./input-client.js";
+import { shouldApplyConfig } from "./session-config.js";
 import { mountDiagnostics } from "./diagnostics.js";
 
-const config = await fetch("/api/config").then(response => {
-  if (!response.ok) throw new Error("Could not load session configuration");
-  return response.json();
-});
-const SESSIONS = Object.fromEntries(config.sessions.map(name => [name, { port: config.inputPorts[name] }]));
-for (const button of document.querySelectorAll("#tabs [data-s]")) {
-  button.hidden = !SESSIONS[button.dataset.s];
-}
 const $ = (id) => document.getElementById(id);
 const video = $("video");
-let session = SESSIONS.snes ? "snes" : config.sessions[0], pc = null, client = null, videoGen = 0;
+const tabs = $("tabs");
+let config = null;
+let session = null, pc = null, client = null, videoGen = 0, inputGen = 0;
+let retryTimer = null;
 
 function setStatus(id, text, cls = "") {
   const el = $(id); el.textContent = text; el.className = cls;
+}
+
+function detail(name) {
+  return config?.details?.[name] ?? { phase: "Unknown", ready: false, message: "" };
+}
+
+function label(name) {
+  const consoleName = detail(name).console;
+  if (!consoleName || consoleName === name) return name.toUpperCase();
+  return `${consoleName.toUpperCase()} · ${name}`;
+}
+
+function renderTabs() {
+  tabs.replaceChildren();
+  for (const name of config.sessions) {
+    const info = detail(name);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.session = name;
+    button.textContent = label(name);
+    button.title = info.message || info.phase;
+    button.classList.toggle("on", name === session);
+    button.classList.toggle("pending", !info.ready);
+    tabs.append(button);
+  }
+  if (!config.sessions.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = config.source === "kubernetes"
+      ? "No RetroSession resources in this namespace."
+      : "No sessions are configured.";
+    tabs.append(empty);
+  }
+}
+
+function describe(name) {
+  const info = detail(name);
+  if (!info.ready) {
+    return info.message ? `${info.phase}: ${info.message}` : info.phase;
+  }
+  return info.console ? `${info.console.toUpperCase()} · ${info.phase}` : info.phase;
 }
 
 // ---- Video: WebRTC WHEP from MediaMTX ----
 async function startVideo() {
   const gen = ++videoGen;
   pc?.close();
+  pc = null;
+  clearTimeout(retryTimer);
+  const current = session;
+  if (!current || !detail(current).ready) {
+    setStatus("st-video", "idle", "");
+    return;
+  }
   setStatus("st-video", "connecting", "warn");
   try {
     const peer = new RTCPeerConnection();
-    const streamSession = session;
     pc = peer;
     peer.addTransceiver("video", { direction: "recvonly" });
     peer.addTransceiver("audio", { direction: "recvonly" });
@@ -118,7 +164,9 @@ async function startVideo() {
       if (gen !== videoGen) return;
       const s = peer.connectionState;
       setStatus("st-video", s, s === "connected" ? "ok" : s === "failed" ? "bad" : "warn");
-      if (s === "failed" || s === "disconnected") setTimeout(() => gen === videoGen && startVideo(), 2000);
+      if (s === "failed" || s === "disconnected") {
+        setTimeout(() => gen === videoGen && startVideo(), 2000);
+      }
     };
     await peer.setLocalDescription(await peer.createOffer());
     await new Promise((res) => {
@@ -127,7 +175,10 @@ async function startVideo() {
       setTimeout(res, 2000);
     });
     if (gen !== videoGen) return;
-    const r = await fetch(`http://${location.hostname}:${config.mediaPort}/${streamSession}/whep`, {
+    const url = config.mode === "proxy"
+      ? `/api/sessions/${encodeURIComponent(current)}/whep`
+      : `http://${location.hostname}:${config.mediaPort}/${encodeURIComponent(current)}/whep`;
+    const r = await fetch(url, {
       method: "POST", headers: { "Content-Type": "application/sdp" }, body: peer.localDescription.sdp,
     });
     if (!r.ok) throw new Error(`WHEP ${r.status}`);
@@ -142,40 +193,129 @@ async function startVideo() {
 
 // ---- Input: keyboard + gamepad -> WebSocket ----
 function startInput() {
+  const gen = ++inputGen;
   client?.stop();
-  const inputSession = session;
-  const { port } = SESSIONS[inputSession];
-  client = new InputClient({
-    url: `ws://${location.hostname}:${port}/sessions/${inputSession}/input`,
+  client = null;
+  const current = session;
+  if (!current || !detail(current).ready) {
+    setStatus("st-input", "idle", "");
+    return;
+  }
+  const base = config.mode === "proxy"
+    ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/sessions/${encodeURIComponent(current)}/input`
+    : `ws://${location.hostname}:${config.inputPorts[current]}/sessions/${encodeURIComponent(current)}/input`;
+  const inputClient = new InputClient({
+    url: base,
     getToken: async () => {
-      const response = await fetch(`/api/token?session=${inputSession}`);
+      const response = await fetch(`/api/token?session=${encodeURIComponent(current)}`);
       if (!response.ok) throw new Error(`Token ${response.status}`);
       return response.text();
     },
     diagnostics: $("debug-enabled").checked,
-    onGamepad: (s) => setStatus("st-pad", s),
-    onStatus: (s) => setStatus("st-input", s,
-      s === "connected" ? "ok" : s === "another-controller-active" ? "bad" : "warn"),
+    onGamepad: (s) => { if (gen === inputGen) setStatus("st-pad", s); },
+    onStatus: (s) => {
+      if (gen !== inputGen) return;
+      setStatus("st-input", s,
+        s === "connected" ? "ok" : s === "another-controller-active" ? "bad" : "warn");
+    },
   });
-  client.start();
+  client = inputClient;
+  inputClient.start();
 }
 
-function selectSession(s) {
-  session = s;
-  document.querySelectorAll("#tabs [data-s]").forEach((b) => b.classList.toggle("on", b.dataset.s === s));
+function stopConnections() {
+  videoGen++;
+  inputGen++;
+  pc?.close();
+  pc = null;
+  client?.stop();
+  client = null;
+  video.srcObject = null;
+  setStatus("st-video", "idle", "");
+  setStatus("st-input", "idle", "");
+}
+
+function selectSession(name) {
+  session = name;
+  renderTabs();
+  if (!name) {
+    stopConnections();
+    setStatus("st-session", "none", "");
+    return;
+  }
+  setStatus("st-session", describe(name), detail(name).ready ? "ok" : "warn");
   startVideo();
   startInput();
 }
 
-$("tabs").addEventListener("click", (e) => {
-  if (e.target.dataset.s) { selectSession(e.target.dataset.s); e.target.blur(); }
+function preferredSession() {
+  const ready = config.sessions.find((name) => detail(name).ready);
+  if (ready) return ready;
+  return config.sessions[0] ?? null;
+}
+
+function applyConfig(next) {
+  const previous = session;
+  config = next;
+  renderTabs();
+  if (previous && !config.sessions.includes(previous)) {
+    session = null;
+  }
+  if (previous && config.sessions.includes(previous)) {
+    if (detail(previous).ready) {
+      // Reconnect only if the session just became ready.
+      if (pc === null || client === null) selectSession(previous);
+      else setStatus("st-session", describe(previous), "ok");
+    } else if (pc !== null || client !== null) {
+      stopConnections();
+      setStatus("st-session", describe(previous), "warn");
+    } else {
+      setStatus("st-session", describe(previous), "warn");
+    }
+    return;
+  }
+  const nextSession = preferredSession();
+  if (nextSession) selectSession(nextSession);
+  else {
+    stopConnections();
+    setStatus("st-session", config.source === "kubernetes" ? "no sessions" : "none", "");
+  }
+}
+
+async function loadConfig() {
+  try {
+    const response = await fetch("/api/config", { cache: "no-store" });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `config ${response.status}`);
+    }
+    const next = await response.json();
+    if (!shouldApplyConfig(config, next, session, session && detail(session).ready,
+                           pc !== null && client !== null)) return;
+    applyConfig(next);
+  } catch (err) {
+    stopConnections();
+    setStatus("st-session", `discovery failed: ${err.message}`, "bad");
+  }
+}
+
+tabs.addEventListener("click", (e) => {
+  const name = e.target.dataset?.session;
+  if (!name) return;
+  if (!detail(name).ready) {
+    setStatus("st-session", describe(name), "warn");
+    return;
+  }
+  if (name !== session) selectSession(name);
+  e.target.blur();
 });
 $("unmute").addEventListener("click", (e) => {
   video.muted = !video.muted; e.target.textContent = video.muted ? "Unmute" : "Mute"; e.target.blur();
 });
 
 mountDiagnostics({ getClient: () => client, getPeer: () => pc, video, getSession: () => session });
-selectSession("snes");
+await loadConfig();
+setInterval(loadConfig, 5000);
 </script>
 </body>
 </html>

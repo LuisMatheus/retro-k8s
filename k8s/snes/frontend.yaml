@@ -16,7 +16,8 @@ spec:
         app.kubernetes.io/name: frontend
         app.kubernetes.io/part-of: retro-k8s
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: frontend
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -36,16 +37,16 @@ spec:
                 secretKeyRef:
                   name: retro-session-secret
                   key: INPUT_TOKEN_SECRET
-            - name: SESSIONS
-              value: snes
+            - name: SESSION_SOURCE
+              value: kubernetes
             - name: DEV_HOST
               value: 0.0.0.0
             - name: DEV_PORT
               value: "8000"
-            - name: MEDIA_PORT
-              value: "18889"
-            - name: SNES_INPUT_PORT
-              value: "18765"
+            - name: MEDIA_HOST
+              value: mediamtx
+            - name: MEDIA_WHEP_PORT
+              value: "8889"
           readinessProbe:
             httpGet:
               path: /

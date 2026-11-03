@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
-"""DEV ONLY. Serves browser/ and mints short-lived input tokens at /api/token.
+"""Serve the browser UI, discover sessions and mint short-lived input tokens.
+
+SESSION_SOURCE selects discovery:
+  kubernetes - list RetroSession resources with the pod service account and
+               proxy input/WHEP through this server (same origin).
+  static     - use SESSIONS/SNES_INPUT_PORT/GBA_INPUT_PORT and let the browser
+               connect directly (Docker Compose).
+  auto       - kubernetes when service-account credentials are present,
+               otherwise static. This is the default.
+
 Run from your project root:  python3 input-agent/dev-server.py
 Reads INPUT_TOKEN_SECRET from the environment or a .env file. The token endpoint
 has NO authentication: never expose this server beyond localhost."""
+from __future__ import annotations
+
 import os
-import json
 import sys
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from http.server import ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
-from agent.auth import mint_token  # noqa: E402  (stdlib only)
-
-SESSIONS = set(os.environ.get("SESSIONS", "snes,gba").split(","))
-HOST = os.environ.get("DEV_HOST", "127.0.0.1")
-PORT = int(os.environ.get("DEV_PORT", "8000"))
+from frontend import (  # noqa: E402
+    KubeSessionSource,
+    SessionRegistry,
+    make_handler,
+    static_config_from_env,
+)
 
 
 def load_secret() -> str:
@@ -29,46 +39,34 @@ def load_secret() -> str:
     sys.exit("INPUT_TOKEN_SECRET not found in environment or .env")
 
 
+def session_source() -> KubeSessionSource | None:
+    mode = os.environ.get("SESSION_SOURCE", "auto").strip().lower()
+    kube = KubeSessionSource()
+    if mode == "kubernetes":
+        return kube
+    if mode == "static":
+        return None
+    if mode != "auto":
+        sys.exit(f"SESSION_SOURCE must be auto, kubernetes or static (got {mode!r})")
+    return kube if kube.available() else None
+
+
 SECRET = load_secret()
+HOST = os.environ.get("DEV_HOST", "127.0.0.1")
+PORT = int(os.environ.get("DEV_PORT", "8000"))
+MEDIA_HOST = os.environ.get("MEDIA_HOST", "mediamtx")
+MEDIA_WHEP_PORT = int(os.environ.get("MEDIA_WHEP_PORT", "8889"))
 
-
-class Handler(SimpleHTTPRequestHandler):
-    def __init__(self, *a, **k):
-        super().__init__(*a, directory=os.path.join(ROOT, "browser"), **k)
-
-    def do_GET(self):
-        url = urlparse(self.path)
-        if url.path == "/api/config":
-            body = json.dumps({
-                "sessions": sorted(SESSIONS),
-                "mediaPort": int(os.environ.get("MEDIA_PORT", "8889")),
-                "inputPorts": {
-                    "snes": int(os.environ.get("SNES_INPUT_PORT", "8765")),
-                    "gba": int(os.environ.get("GBA_INPUT_PORT", "8766")),
-                },
-            }).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        if url.path == "/api/token":
-            sid = parse_qs(url.query).get("session", [""])[0]
-            if sid not in SESSIONS:
-                return self.send_error(404, "unknown session")
-            body = mint_token(SECRET, sid, ttl=60).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        super().do_GET()
+NAMES, PORTS, MEDIA_PORT = ([], {}, 8889)
+SOURCE = session_source()
+if SOURCE is None:
+    NAMES, PORTS, MEDIA_PORT = static_config_from_env()
+REGISTRY = SessionRegistry(SOURCE, NAMES, PORTS, MEDIA_PORT)
 
 
 if __name__ == "__main__":
-    print(f"Open http://localhost:{PORT}  (binding {HOST})")
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    mode = "kubernetes proxy" if SOURCE is not None else "static direct"
+    print(f"Open http://localhost:{PORT}  (binding {HOST}, sessions: {mode})")
+    ThreadingHTTPServer(
+        (HOST, PORT), make_handler(REGISTRY, SECRET, MEDIA_HOST, MEDIA_WHEP_PORT)
+    ).serve_forever()

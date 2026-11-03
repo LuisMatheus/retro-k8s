@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retrosession-operator
+  namespace: retro-k8s
+  labels:
+    app.kubernetes.io/name: retrosession-operator
+    app.kubernetes.io/part-of: retro-k8s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: retrosession-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: retrosession-operator
+        app.kubernetes.io/part-of: retro-k8s
+    spec:
+      serviceAccountName: retrosession-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: retro-k8s-poc/operator
+          imagePullPolicy: Never
+          args:
+            - --namespace=retro-k8s
+            - --default-image=retro-k8s-poc/retroarch-input:pilot
+            - --image-pull-policy=Never
+            - --rom-library-path=/run/retro-k8s-input/roms
+            - --rom-mount-path=/roms
+            - --node-input-root=/run/retro-k8s-input
+            - --token-secret=retro-session-secret
+            - --media-service=mediamtx
+            - --media-rtmp-port=1935
+            # These match the pilot host's .env. Change them if PUID, PGID or
+            # INPUT_GID differ.
+            - --session-uid=1000
+            - --session-gid=1001
+            - --input-gid=104
+            - --agent-port=8765
+            - --leader-elect=false
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
