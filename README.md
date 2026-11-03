@@ -259,8 +259,9 @@ Deployment, garbage-collected the session resources, and retained and reused the
 save PVC across `RetroSession` deletion and recreation. The frontend now lists
 `RetroSession` resources with its service account and proxies input WebSocket
 and WHEP signaling through same-origin routes, so the browser only needs the
-frontend port-forward. GBA validation, per-session audio relay, and per-player
-isolation are still to be built.
+frontend port-forward. GBA validation and per-player isolation remain in progress.
+Each session has a local media ingest container and a relay that publishes to the
+shared MediaMTX server.
 
 On November 3, 2026, the operator-aware frontend was verified in Minikube:
 `/api/config` listed `chrono-trigger` with `mode: proxy`, `/api/token` minted a

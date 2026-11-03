@@ -86,7 +86,7 @@ type SessionEndpoints struct {
 	// +optional
 	StreamPath string `json:"streamPath,omitempty"`
 
-	// RTMPURL is the in-cluster RTMP publish URL.
+	// RTMPURL is the session Pod-local RTMP publish URL (not reachable from other Pods).
 	// +optional
 	RTMPURL string `json:"rtmpURL,omitempty"`
 

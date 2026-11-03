@@ -44,6 +44,7 @@ const (
 type SessionConfig struct {
 	DefaultImage     string
 	RelayImage       string
+	LocalMediaImage  string
 	ImagePullPolicy  corev1.PullPolicy
 	ROMLibraryPath   string
 	ROMMountPath     string
@@ -366,12 +367,12 @@ func (r *RetroSessionReconciler) desiredDeployment(session *v1alpha1.RetroSessio
 	env := []corev1.EnvVar{
 		{Name: "CORE", Value: coreForConsole(session.Spec.Console)},
 		{Name: "ROM_PATH", Value: romPath},
-		{Name: "STREAM_URL", Value: fmt.Sprintf("rtmp://%s:%d/raw/%s", r.Config.MediaService, r.Config.MediaRTMPPort, session.Name)},
+		{Name: "STREAM_URL", Value: fmt.Sprintf("rtmp://127.0.0.1:%d/raw/%s", r.Config.MediaRTMPPort, session.Name)},
 		{Name: "SAVE_PATH", Value: "/saves"},
 		{Name: "VIDEO_DRIVER", Value: "gl"},
 		{Name: "AUDIO_DRIVER", Value: "sdl2"},
 		{Name: "SDL_AUDIODRIVER", Value: "dummy"},
-		{Name: "RTMP_HOST", Value: r.Config.MediaService},
+		{Name: "RTMP_HOST", Value: "127.0.0.1"},
 		{Name: "RTMP_PORT", Value: strconv.Itoa(int(r.Config.MediaRTMPPort))},
 		{Name: "INPUT_AGENT", Value: "1"},
 		{Name: "AGENT_PORT", Value: strconv.Itoa(int(r.Config.AgentPort))},
@@ -445,7 +446,19 @@ func (r *RetroSessionReconciler) desiredDeployment(session *v1alpha1.RetroSessio
 						Image:           r.Config.RelayImage,
 						ImagePullPolicy: r.Config.ImagePullPolicy,
 						Command:         []string{"/bin/sh", "-c"},
-						Args:            []string{fmt.Sprintf("while true; do ffmpeg -nostdin -loglevel warning -i rtmp://%s:%d/raw/%s -map 0:v:0 -map 0:a:0 -c:v copy -c:a libopus -ar 48000 -ac 2 -f rtsp -rtsp_transport tcp rtsp://%s:8554/%s; sleep 2; done", r.Config.MediaService, r.Config.MediaRTMPPort, session.Name, r.Config.MediaService, session.Name)},
+						Args:            []string{fmt.Sprintf("while true; do ffmpeg -nostdin -loglevel warning -i rtmp://127.0.0.1:%d/raw/%s -map 0:v:0 -map 0:a:0 -c:v copy -c:a libopus -ar 48000 -ac 2 -f rtsp -rtsp_transport tcp rtsp://%s:8554/%s; sleep 2; done", r.Config.MediaRTMPPort, session.Name, r.Config.MediaService, session.Name)},
+						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+					}, {
+						Name:            "local-media",
+						Image:           r.Config.LocalMediaImage,
+						ImagePullPolicy: r.Config.ImagePullPolicy,
+						Env: []corev1.EnvVar{
+							{Name: "MTX_RTMPADDRESS", Value: fmt.Sprintf("127.0.0.1:%d", r.Config.MediaRTMPPort)},
+							{Name: "MTX_RTSP", Value: "no"},
+							{Name: "MTX_WEBRTC", Value: "no"},
+							{Name: "MTX_HLS", Value: "no"},
+							{Name: "MTX_SRT", Value: "no"},
+						},
 						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 					}},
 					Volumes: []corev1.Volume{
@@ -504,7 +517,7 @@ func (r *RetroSessionReconciler) endpoints(session *v1alpha1.RetroSession) *v1al
 		InputPort:    r.Config.AgentPort,
 		InputPath:    fmt.Sprintf("/sessions/%s/input", session.Name),
 		StreamPath:   session.Name,
-		RTMPURL:      fmt.Sprintf("rtmp://%s:%d/raw/%s", r.Config.MediaService, r.Config.MediaRTMPPort, session.Name),
+		RTMPURL:      fmt.Sprintf("rtmp://127.0.0.1:%d/raw/%s", r.Config.MediaRTMPPort, session.Name),
 		WHEPPath:     fmt.Sprintf("/%s/whep", session.Name),
 	}
 }

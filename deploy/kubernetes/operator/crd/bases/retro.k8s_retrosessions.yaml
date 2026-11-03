@@ -184,7 +184,7 @@ spec:
                     description: InputService is the Service name for the input WebSocket.
                     type: string
                   rtmpURL:
-                    description: RTMPURL is the in-cluster RTMP publish URL.
+                    description: RTMPURL is the session Pod-local RTMP publish URL (not reachable from other Pods).
                     type: string
                   streamPath:
                     description: StreamPath is the MediaMTX path used for the RTMP

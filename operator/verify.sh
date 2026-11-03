@@ -87,7 +87,7 @@ observed=$(field '{.status.observedGeneration}')
   fail "inputPath endpoint is wrong"
 [[ $(field '{.status.endpoints.streamPath}') == "$session" ]] ||
   fail "streamPath endpoint is wrong"
-[[ $(field '{.status.endpoints.rtmpURL}') == "rtmp://mediamtx:1935/raw/$session" ]] ||
+[[ $(field '{.status.endpoints.rtmpURL}') == "rtmp://127.0.0.1:1935/raw/$session" ]] ||
   fail "rtmpURL endpoint is wrong"
 [[ $(field '{.status.endpoints.whepPath}') == "/$session/whep" ]] ||
   fail "whepPath endpoint is wrong"

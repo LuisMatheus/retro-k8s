@@ -36,6 +36,7 @@ func testReconciler(c client.Client, scheme *runtime.Scheme) *RetroSessionReconc
 		Config: SessionConfig{
 			DefaultImage:     "retro-k8s-poc/retroarch-input:pilot",
 			RelayImage:       "retro-k8s-poc/frontend:pilot",
+			LocalMediaImage:  "bluenviron/mediamtx:1",
 			ImagePullPolicy:  corev1.PullNever,
 			ROMLibraryPath:   "/run/retro-k8s-input/roms",
 			ROMMountPath:     "/roms",
@@ -118,8 +119,19 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 	if deployment.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
 		t.Fatalf("expected Recreate strategy, got %s", deployment.Spec.Strategy.Type)
 	}
+	if len(deployment.Spec.Template.Spec.Containers) != 3 {
+		t.Fatalf("expected session, audio relay, and local media containers; got %d", len(deployment.Spec.Template.Spec.Containers))
+	}
 	container := deployment.Spec.Template.Spec.Containers[0]
-	if len(deployment.Spec.Template.Spec.Containers) != 2 || deployment.Spec.Template.Spec.Containers[1].Name != "audio-relay" {
+	local := deployment.Spec.Template.Spec.Containers[2]
+	if local.Name != "local-media" || local.Image != "bluenviron/mediamtx:1" {
+		t.Fatalf("unexpected local media container: %s %s", local.Name, local.Image)
+	}
+	relay := deployment.Spec.Template.Spec.Containers[1]
+	if !strings.Contains(relay.Args[0], "rtmp://127.0.0.1:1935/raw/chrono-trigger") || !strings.Contains(relay.Args[0], "rtsp://mediamtx:8554/chrono-trigger") {
+		t.Fatalf("relay does not connect local ingest to shared playback: %q", relay.Args)
+	}
+	if deployment.Spec.Template.Spec.Containers[1].Name != "audio-relay" {
 		t.Fatal("session must include its own audio relay")
 	}
 	if deployment.Spec.Template.Spec.Containers[1].Image != "retro-k8s-poc/frontend:pilot" {
@@ -133,6 +145,9 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 	}
 	env := envMap(container.Env)
 	for key, want := range map[string]string{
+		"STREAM_URL":  "rtmp://127.0.0.1:1935/raw/chrono-trigger",
+		"RTMP_HOST":   "127.0.0.1",
+		"RTMP_PORT":   "1935",
 		"CORE":        "snes9x",
 		"ROM_PATH":    "/roms/Chrono Trigger (USA).sfc",
 		"SESSION_ID":  "chrono-trigger",
@@ -188,6 +203,25 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 	}
 	if len(pvc.OwnerReferences) != 0 {
 		t.Fatal("save PVC must not be owned by the session")
+	}
+}
+
+func TestSessionMediaUsesConfiguredLocalPort(t *testing.T) {
+	r := testReconciler(nil, testScheme(t))
+	r.Config.MediaRTMPPort = 1940
+	session := newSession()
+	pod := r.desiredDeployment(session).Spec.Template.Spec
+	if got := envMap(pod.Containers[0].Env)["STREAM_URL"]; got != "rtmp://127.0.0.1:1940/raw/chrono-trigger" {
+		t.Fatalf("session stream URL = %q", got)
+	}
+	if got := envMap(pod.Containers[2].Env)["MTX_RTMPADDRESS"]; got != "127.0.0.1:1940" {
+		t.Fatalf("local RTMP address = %q", got)
+	}
+	if !strings.Contains(pod.Containers[1].Args[0], "rtmp://127.0.0.1:1940/raw/chrono-trigger") {
+		t.Fatalf("relay input = %q", pod.Containers[1].Args)
+	}
+	if got := r.endpoints(session).RTMPURL; got != "rtmp://127.0.0.1:1940/raw/chrono-trigger" {
+		t.Fatalf("status RTMP URL = %q", got)
 	}
 }
 
@@ -345,7 +379,7 @@ func TestReconcileReportsReadyAndEndpoints(t *testing.T) {
 	if updated.Status.Endpoints.InputPath != "/sessions/chrono-trigger/input" {
 		t.Fatalf("input path = %q", updated.Status.Endpoints.InputPath)
 	}
-	if updated.Status.Endpoints.RTMPURL != "rtmp://mediamtx:1935/raw/chrono-trigger" {
+	if updated.Status.Endpoints.RTMPURL != "rtmp://127.0.0.1:1935/raw/chrono-trigger" {
 		t.Fatalf("RTMP URL = %q", updated.Status.Endpoints.RTMPURL)
 	}
 	if updated.Status.Endpoints.WHEPPath != "/chrono-trigger/whep" {

@@ -13,6 +13,7 @@ games_dir=${GAMES_DIR:-$HOME/Documents/games}
 rom_dir=${ROM_DIR:-$games_dir}
 operator_image=${OPERATOR_IMAGE:-retro-k8s-poc/operator:pilot}
 session_image=${SESSION_IMAGE:-retro-k8s-poc/retroarch-input:pilot}
+local_media_image=${LOCAL_MEDIA_IMAGE:-bluenviron/mediamtx:1}
 build=true
 load=true
 attach=true
@@ -30,6 +31,7 @@ Environment:
   MINIKUBE_PROFILE  Minikube profile (default: minikube)
   OPERATOR_IMAGE    Operator image (default: retro-k8s-poc/operator:pilot)
   SESSION_IMAGE     Default emulator image for sessions
+  LOCAL_MEDIA_IMAGE Pod-local MediaMTX image (default: bluenviron/mediamtx:1)
   ROM_DIR           ROM library root to attach (default: ~/Documents/games)
   NODE_INPUT_ROOT   Node hostPath root (default: /run/retro-k8s-input)
   PUID/PGID/INPUT_GID, LOG_LEVEL, MIN_HOLD_MS
@@ -107,6 +109,8 @@ fi
 docker image inspect "$operator_image" >/dev/null
 if $load; then
   minikube -p "$profile" image load --daemon "$operator_image"
+  docker image inspect "$local_media_image" >/dev/null || { echo "Local media image not found: $local_media_image" >&2; exit 1; }
+  minikube -p "$profile" image load --daemon "$local_media_image"
 fi
 
 kubectl --context "$profile" apply -f "$repo_root/deploy/kubernetes/operator/default/namespace.yaml" >/dev/null
@@ -153,6 +157,7 @@ patches:
                 args:
                   - --namespace=$namespace
                   - --default-image=$session_image
+                  - --local-media-image=$local_media_image
                   - --image-pull-policy=Never
                   - --rom-library-path=$node_input_root/roms
                   - --rom-mount-path=/roms

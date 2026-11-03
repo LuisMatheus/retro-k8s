@@ -57,7 +57,7 @@ endpoints:
   inputPort: 8765
   inputPath: /sessions/chrono-trigger/input
   streamPath: chrono-trigger
-  rtmpURL: rtmp://mediamtx:1935/raw/chrono-trigger
+  rtmpURL: rtmp://127.0.0.1:1935/raw/chrono-trigger  # reachable within the session Pod
   whepPath: /chrono-trigger/whep
 ```
 
@@ -187,8 +187,10 @@ Save PVCs remain separate and should be retained during this migration.
   `/api/sessions/<name>/whep` to the endpoints in `status.endpoints`. The browser
   no longer needs direct session port-forwards; WebRTC media still uses the
   MediaMTX NodePort.
-- Each session includes an FFmpeg relay that converts AAC to Opus while
-  copying video to the session's MediaMTX playback path.
+- Each session publishes to a Pod-local MediaMTX container. Its FFmpeg relay
+  retries the shared MediaMTX connection, converts AAC to Opus, and copies video
+  to the session playback path. The Pod-local server preserves the emulator stream
+  across shared MediaMTX restarts; loss of the local server can interrupt it.
 - A save PVC is `ReadWriteOnce` in the pilot. Use a separate claim per session;
   do not point two running sessions at the same claim.
 - The session image is privileged because the pilot's non-privileged probe
@@ -213,3 +215,23 @@ make build
 use controller-runtime's fake client and cover creation, status/endpoints,
 missing and pending claims, repair, foreign-resource refusal, readiness,
 failure reporting, GBA core selection, and spec validation.
+
+## Shared media recovery
+
+Each session's local MediaMTX receives RetroArch's RTMP stream. The audio relay
+reads that stream and retries its connection to the shared MediaMTX, so a shared
+server restart does not require restarting RetroArch. Deploying this version
+changes the session Pod template and therefore replaces running Pods: save game
+progress before upgrading. The session Pod also needs the configured local media
+image available on the node when the pull policy is `Never`.
+
+To exercise the network topology without changing Kubernetes workloads, run
+`bash operator/tests/media-recovery.sh`. It uses Docker, the local
+`bluenviron/mediamtx:1` image, and the frontend FFmpeg image. The test publishes
+a synthetic video/audio stream and restarts an isolated shared server; it does
+not verify RetroArch or browser playback.
+
+A separate Minikube check on November 3, 2026 used an isolated GBA
+`RetroSession` and save claim. After restarting its shared MediaMTX deployment,
+H.264 and Opus returned without restarting the emulator Pod or its containers.
+That check did not exercise browser reconnection.
