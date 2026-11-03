@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediamtx
+  labels:
+    app.kubernetes.io/name: mediamtx
+    app.kubernetes.io/part-of: retro-k8s
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mediamtx
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mediamtx
+        app.kubernetes.io/part-of: retro-k8s
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mediamtx
+          image: bluenviron/mediamtx:1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MTX_WEBRTCADDITIONALHOSTS
+              valueFrom:
+                configMapKeyRef:
+                  name: snes-session
+                  key: WEBRTC_HOST
+          ports:
+            - name: rtmp
+              containerPort: 1935
+            - name: webrtc
+              containerPort: 8889
+            - name: webrtc-udp
+              containerPort: 30189
+              protocol: UDP
+            - name: rtsp
+              containerPort: 8554
+          readinessProbe:
+            tcpSocket:
+              port: webrtc
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /mediamtx.yml
+              subPath: mediamtx.yml
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: mediamtx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mediamtx
+  labels:
+    app.kubernetes.io/name: mediamtx
+    app.kubernetes.io/part-of: retro-k8s
+spec:
+  selector:
+    app.kubernetes.io/name: mediamtx
+  ports:
+    - name: rtmp
+      port: 1935
+      targetPort: rtmp
+    - name: webrtc
+      port: 8889
+      targetPort: webrtc
+    - name: webrtc-udp
+      port: 30189
+      targetPort: webrtc-udp
+      protocol: UDP
+    - name: rtsp
+      port: 8554
+      targetPort: rtsp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mediamtx-ice
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: mediamtx
+  ports:
+    - name: ice
+      port: 30189
+      targetPort: webrtc-udp
+      nodePort: 30189
+      protocol: UDP

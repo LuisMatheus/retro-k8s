@@ -1,0 +1,14 @@
+# Kubernetes copy of mediamtx/mediamtx.yml, mounted at /mediamtx.yml.
+logLevel: info
+
+rtmp: yes
+rtmpAddress: :1935
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :30189
+webrtcAllowOrigins: ["*"]
+webrtcAdditionalHosts: []
+
+paths:
+  all_others:

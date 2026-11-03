@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snes
+  labels:
+    app.kubernetes.io/name: snes
+    app.kubernetes.io/part-of: retro-k8s
+spec:
+  # Recreate keeps one emulator per save volume. The pilot is single-session.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: snes
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: snes
+        app.kubernetes.io/part-of: retro-k8s
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # deploy.sh patches these to the host user and input group.
+        runAsUser: 1000
+        runAsGroup: 1000
+        supplementalGroups:
+          - 104
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: session
+          image: retro-k8s-poc/retroarch-input
+          imagePullPolicy: Never
+          # The probe showed the non-privileged Pod cannot open the attached
+          # /dev/uinput. This exception is for the trusted single-session pilot.
+          securityContext:
+            privileged: true
+          envFrom:
+            - configMapRef:
+                name: snes-session
+            - secretRef:
+                name: retro-session-secret
+          env:
+            - name: CORE
+              value: snes9x
+            - name: STREAM_URL
+              value: rtmp://mediamtx:1935/raw-snes
+            - name: SAVE_PATH
+              value: /saves
+            - name: VIDEO_DRIVER
+              value: gl
+            - name: AUDIO_DRIVER
+              value: sdl2
+            - name: SDL_AUDIODRIVER
+              value: dummy
+            - name: RTMP_HOST
+              value: mediamtx
+            - name: RTMP_PORT
+              value: "1935"
+            - name: INPUT_AGENT
+              value: "1"
+            - name: AGENT_PORT
+              value: "8765"
+          ports:
+            - name: input
+              containerPort: 8765
+          readinessProbe:
+            # The agent listens before RetroArch starts. Wait for the emulator
+            # process so a bad ROM or core fails the rollout instead of passing.
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - grep -lqx retroarch /proc/[0-9]*/comm >/dev/null 2>&1
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24
+          volumeMounts:
+            - name: saves
+              mountPath: /saves
+            - name: roms
+              mountPath: /roms
+              readOnly: true
+            - name: uinput
+              mountPath: /dev/uinput
+            - name: events
+              mountPath: /dev/input
+              readOnly: true
+            - name: udev
+              mountPath: /run/udev/data
+              readOnly: true
+      volumes:
+        - name: saves
+          persistentVolumeClaim:
+            claimName: snes-saves
+        # attach-node-input.sh clones the host ROM directory and live input
+        # paths into this node directory. The Pod never writes the ROM mount.
+        - name: roms
+          hostPath:
+            path: /run/retro-k8s-input/roms
+            type: Directory
+        - name: uinput
+          hostPath:
+            path: /run/retro-k8s-input/dev/uinput
+            type: CharDevice
+        - name: events
+          hostPath:
+            path: /run/retro-k8s-input/dev/input
+            type: Directory
+        - name: udev
+          hostPath:
+            path: /run/retro-k8s-input/run/udev/data
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: snes-input
+  labels:
+    app.kubernetes.io/name: snes
+    app.kubernetes.io/part-of: retro-k8s
+spec:
+  selector:
+    app.kubernetes.io/name: snes
+  ports:
+    - name: input
+      port: 8765
+      targetPort: input

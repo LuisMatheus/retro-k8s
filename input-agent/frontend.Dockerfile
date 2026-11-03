@@ -1,5 +1,6 @@
 # Local development UI and token issuer; no uinput/device access required.
 FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY input-agent/dev-server.py /app/dev-server.py
 COPY input-agent/browser/ /app/browser/

@@ -4,6 +4,7 @@ Run from your project root:  python3 input-agent/dev-server.py
 Reads INPUT_TOKEN_SECRET from the environment or a .env file. The token endpoint
 has NO authentication: never expose this server beyond localhost."""
 import os
+import json
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -37,6 +38,22 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         url = urlparse(self.path)
+        if url.path == "/api/config":
+            body = json.dumps({
+                "sessions": sorted(SESSIONS),
+                "mediaPort": int(os.environ.get("MEDIA_PORT", "8889")),
+                "inputPorts": {
+                    "snes": int(os.environ.get("SNES_INPUT_PORT", "8765")),
+                    "gba": int(os.environ.get("GBA_INPUT_PORT", "8766")),
+                },
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if url.path == "/api/token":
             sid = parse_qs(url.query).get("session", [""])[0]
             if sid not in SESSIONS:

@@ -1,0 +1,119 @@
+# Single-SNES Minikube pilot
+
+This is roadmap step 2: static Kustomize manifests for the frontend, MediaMTX
+and one combined RetroArch/input session. It runs beside Docker Compose because
+the pilot uses a different virtual pad name.
+
+The Pod mounts one user-supplied ROM directory read-only at `/roms` and a
+`ReadWriteOnce` PVC at `/saves`. The signing secret is a Kubernetes Secret, and
+the session Deployment uses one replica with the `Recreate` strategy.
+
+## Prerequisites
+
+- A running Docker-backed Minikube profile. The input probe must already pass;
+  the pilot uses the same non-root, privileged container exception.
+- The session and frontend images. Build them once with Compose if needed.
+- A ROM and the values in `.env` (`SNES_ROM`, `PUID`, `PGID`, `INPUT_GID`,
+  `INPUT_TOKEN_SECRET`).
+
+```bash
+docker compose build retroarch-snes frontend
+```
+
+## Deploy
+
+From the project root:
+
+```bash
+bash k8s/snes/deploy.sh
+```
+
+The local browser forwards can run automatically as a user service. The
+provided unit assumes the checkout is at `~/Documents/retro-k8s`:
+
+```bash
+install -m 0644 k8s/snes/retro-k8s-browser.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now retro-k8s-browser.service
+```
+
+Open http://127.0.0.1:18000 and click Unmute. The browser uses localhost TCP
+forwards for the UI, WHEP signaling and controller input. WebRTC media uses
+UDP NodePort 30189 on the Minikube IP. An FFmpeg relay copies H.264 video and
+converts AAC to Opus for the `snes` playback path. The development token
+issuer is unauthenticated, so keep these forwards bound to localhost.
+The service reconnects its forwards after a Pod replacement. Minikube itself
+must be running, and the temporary node attachments must be restored if the
+Minikube node has restarted. Stop automatic forwarding with
+`systemctl --user disable --now retro-k8s-browser.service`.
+
+The script:
+
+1. Tags the local images as `pilot` and loads them into the Minikube profile,
+   along with `bluenviron/mediamtx:1`.
+2. Generates `k8s/snes/generated/` (Secret values, session settings and the
+   UID/GID patch). This directory and `.node-input-state` are ignored by Git.
+3. Clones the host's live `/dev/uinput`, `/dev/input`, `/run/udev/data` and the
+   ROM's parent directory into `/run/retro-k8s-input` on the Minikube node.
+4. Applies the Kustomization and waits for the emulator process.
+
+Useful options:
+
+```bash
+bash k8s/snes/deploy.sh --rom ~/Documents/games/snes/other-game.sfc
+bash k8s/snes/deploy.sh --build          # rebuild images first
+bash k8s/snes/deploy.sh --no-attach      # node paths already attached
+```
+
+The default ROM is `$HOME/Documents/games/snes/$SNES_ROM`. Only the ROM's parent
+directory is exposed to the node, read-only. If you change ROM directories,
+detach and reattach first:
+
+```bash
+bash k8s/snes/attach-node-input.sh detach
+bash k8s/snes/deploy.sh --rom /path/to/roms/other-game.sfc
+```
+
+## Verify
+
+```bash
+bash k8s/snes/verify.sh
+```
+
+The check passes when:
+
+- RetroArch starts and opens the ROM from `/roms`.
+- The named pilot pad (`Retro-K8s Pad snes-k8s`) exists and is reserved for
+  player 1 in the generated RetroArch config.
+- Writing to `/roms` is rejected.
+- A marker written to `/saves` survives deleting and replacing the Pod.
+
+You can inspect the session directly:
+
+```bash
+kubectl -n retro-k8s logs -f deployment/snes
+kubectl -n retro-k8s get pvc snes-saves
+kubectl -n retro-k8s port-forward svc/snes-input 8765:8765
+```
+
+## Stop
+
+```bash
+bash k8s/snes/teardown.sh
+```
+
+This removes the workloads and detaches the node input mounts but keeps the
+namespace and save PVC. Add `--delete-data` to delete both.
+
+## Notes and limits
+
+- The node attachment is a temporary pilot mechanism. It disappears when the
+  Minikube node restarts; run `attach-node-input.sh attach` again. A production
+  deployment needs a device plugin and per-session isolation.
+- The emulator container is privileged because the probe showed that a regular
+  Pod cannot open the attached `/dev/uinput`. It still runs as the non-root
+  session user with the host input group.
+- The save PVC starts empty. Existing Compose saves are not copied into it
+  automatically; the pilot only proves that new saves survive Pod replacement.
+- Browser access targets the local workstation. Remote access requires
+  authentication, protected routes and appropriate WebRTC networking.

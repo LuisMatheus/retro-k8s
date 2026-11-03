@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: snes-saves
+  labels:
+    app.kubernetes.io/name: snes
+    app.kubernetes.io/part-of: retro-k8s
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
