@@ -62,6 +62,32 @@ OpenSSL. The Minikube profile must use the Docker driver. The session image
 requires `/dev/uinput`, `/dev/input` and live udev metadata; it runs privileged
 for this pilot. Ensure you have permission to use the ROMs you provide.
 
+### Setup order and dependencies
+
+For a first installation, follow the numbered steps below. Each step supplies
+something needed by the next:
+
+```text
+Host configuration and ROMs
+  → Minikube and locally loaded images
+  → operator and shared platform
+  → save PVC and RetroSession
+  → operator-created game Deployment and input Service
+  → frontend port-forward and browser
+```
+
+Run the operator helper before the platform helper: it creates or reuses the
+Secret needed by the frontend, installs the `RetroSession` CRD and starts the
+operator. Apply a session's PVC before its `RetroSession`; the operator expects
+the claim to exist and does not create it. If the claim is missing, the session
+reports `SaveClaimNotFound` and the operator retries. You do not need to apply
+an emulator Deployment yourself: the operator creates it and the input Service.
+
+Kubernetes starts and reconciles the resources asynchronously, so applying a
+manifest does not mean its Pods are already ready. Check progress with
+`kubectl --context minikube -n retro-k8s get retrosessions,pods,pvc` before
+opening the browser.
+
 ### 1. Prepare the host and configuration
 
 ```bash
@@ -191,8 +217,58 @@ kubectl --context minikube -n retro-k8s rollout status deployment/chrono-trigger
 To stop Minikube, run `minikube stop -p minikube`. Existing PVCs are retained;
 stopping the cluster does not delete them. Stop the browser port-forward with
 Ctrl+C. Restarting or upgrading the operator can replace session Pods, so save
-first. See the [operator README](operator/README.md#existing-snes-only-attachment)
-if the host input/ROM attachment needs to be reattached.
+first.
+
+On a normal Minikube restart, previously applied resources and PVCs remain in
+the cluster. You normally do not need to rebuild images, redeploy the operator,
+or reapply session manifests unless they have changed or are missing. Start
+Minikube, check session readiness and run the browser port-forward:
+
+```bash
+minikube start -p minikube --driver=docker --keep-context
+kubectl --context minikube -n retro-k8s get retrosessions,pods,pvc
+bash deploy/kubernetes/local/port-forward-frontend.sh
+```
+
+**Known restart issue:** the host input and ROM mounts may disappear when
+Minikube stops, even though the attachment state file remains. The operator
+deploy helper currently trusts that state file; it does not automatically detect
+missing mounts. Check the default node paths after starting Minikube:
+
+```bash
+docker exec minikube sh -c 'test -c /run/retro-k8s-input/dev/uinput && test -d /run/retro-k8s-input/dev/input && test -d /run/retro-k8s-input/run/udev/data && test -d /run/retro-k8s-input/roms' \
+  && echo 'Input and ROM paths exist' || echo 'Input or ROM paths are missing'
+```
+
+If paths are missing, save any running games and stop the sessions using the
+attachment before detaching it. For the example SNES and GBA sessions, first
+pause the operator so it does not immediately recreate their Pods, then scale
+down the Deployments that exist in your cluster:
+
+```bash
+kubectl --context minikube -n retro-k8s scale deployment/retrosession-operator --replicas=0
+# Run the following only for sessions that exist:
+kubectl --context minikube -n retro-k8s scale deployment/chrono-trigger --replicas=0
+kubectl --context minikube -n retro-k8s scale deployment/pokemon-emerald --replicas=0
+kubectl --context minikube -n retro-k8s wait --for=delete pod -l 'retro.k8s/session' --timeout=120s
+```
+
+This keeps the `RetroSession` definitions and save PVCs. Then detach the stale
+attachment and reattach the shared library. Substitute the same absolute
+library path used in `.env`; a directly invoked attachment helper reads
+`GAMES_DIR` from its **environment**, not from `.env`:
+
+```bash
+bash deploy/kubernetes/local/attach-node-input.sh detach
+GAMES_DIR="/absolute/path/to/roms" bash deploy/kubernetes/local/attach-node-input.sh attach
+kubectl --context minikube -n retro-k8s scale deployment/retrosession-operator --replicas=1
+```
+
+The operator reconciles the sessions back to one replica. Check their readiness
+before reconnecting. The path check above only
+confirms the node paths exist; the [input probe](deploy/kubernetes/local/input-probe/README.md)
+can test controller access. See the [operator README](operator/README.md#existing-snes-only-attachment)
+when migrating an older SNES-only attachment.
 
 ## Diagnostics and tests
 
