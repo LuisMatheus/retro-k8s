@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -119,8 +120,8 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 	if deployment.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
 		t.Fatalf("expected Recreate strategy, got %s", deployment.Spec.Strategy.Type)
 	}
-	if len(deployment.Spec.Template.Spec.Containers) != 3 {
-		t.Fatalf("expected session, audio relay, and local media containers; got %d", len(deployment.Spec.Template.Spec.Containers))
+	if len(deployment.Spec.Template.Spec.Containers) != 4 {
+		t.Fatalf("expected session, audio relay, local media, and input health containers; got %d", len(deployment.Spec.Template.Spec.Containers))
 	}
 	container := deployment.Spec.Template.Spec.Containers[0]
 	local := deployment.Spec.Template.Spec.Containers[2]
@@ -136,6 +137,31 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 	}
 	if deployment.Spec.Template.Spec.Containers[1].Image != "retro-k8s-poc/frontend:pilot" {
 		t.Fatal("audio relay must use the configured image")
+	}
+	health := deployment.Spec.Template.Spec.Containers[3]
+	if health.Name != "input-health" {
+		t.Fatalf("expected input-health sidecar, got %s", health.Name)
+	}
+	if health.ReadinessProbe == nil || health.ReadinessProbe.Exec == nil {
+		t.Fatal("input-health must probe the agent over TCP")
+	}
+	if got := health.ReadinessProbe.Exec.Command[2]; !strings.Contains(got, "/dev/tcp/127.0.0.1/8765") {
+		t.Fatalf("input-health probe = %q", got)
+	}
+	if relay.ReadinessProbe == nil || relay.ReadinessProbe.Exec == nil {
+		t.Fatal("audio relay must verify its published media stream")
+	}
+	if got := relay.ReadinessProbe.Exec.Command[2]; !strings.Contains(got, "rtsp://mediamtx:8554/chrono-trigger") || !strings.Contains(got, "grep -qx video") || !strings.Contains(got, "grep -qx audio") {
+		t.Fatalf("audio relay readiness probe = %q", got)
+	}
+	if got := relay.ReadinessProbe.Exec.Command[2]; !strings.Contains(got, "timeout 4 ffprobe") {
+		t.Fatalf("audio relay probe must bound ffprobe: %q", got)
+	}
+	if local.ReadinessProbe != nil {
+		t.Fatal("local media must not use a kubelet probe against Pod loopback")
+	}
+	if got := relay.ReadinessProbe.Exec.Command[2]; !strings.Contains(got, `socket.create_connection(("127.0.0.1", 1935), timeout=1)`) {
+		t.Fatalf("relay must check local RTMP from within the Pod: %q", got)
 	}
 	if container.Image != "retro-k8s-poc/retroarch-input:pilot" {
 		t.Fatalf("unexpected image %q", container.Image)
@@ -353,16 +379,12 @@ func TestReconcileReportsReadyAndEndpoints(t *testing.T) {
 	r := testReconciler(c, testScheme(t))
 	reconcileSession(t, r, session)
 
-	var deployment appsv1.Deployment
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &deployment); err != nil {
-		t.Fatal(err)
-	}
-	deployment.Status.ObservedGeneration = deployment.Generation
-	deployment.Status.AvailableReplicas = 1
-	deployment.Status.ReadyReplicas = 1
-	if err := c.Status().Update(context.Background(), &deployment); err != nil {
-		t.Fatalf("update Deployment status: %v", err)
-	}
+	createSessionPod(t, c, session,
+		readyContainer("session"),
+		readyContainer("audio-relay"),
+		readyContainer("local-media"),
+		readyContainer("input-health"),
+	)
 
 	reconcileSession(t, r, session)
 
@@ -372,6 +394,11 @@ func TestReconcileReportsReadyAndEndpoints(t *testing.T) {
 	}
 	if updated.Status.Phase != v1alpha1.PhaseReady || updated.Status.Reason != "SessionReady" {
 		t.Fatalf("unexpected status: %s/%s (%s)", updated.Status.Phase, updated.Status.Reason, updated.Status.Message)
+	}
+	for _, conditionType := range []string{conditionReady, conditionEmulatorReady, conditionInputAgentReady, conditionMediaReady} {
+		if !meta.IsStatusConditionTrue(updated.Status.Conditions, conditionType) {
+			t.Errorf("condition %s is not true: %+v", conditionType, updated.Status.Conditions)
+		}
 	}
 	if updated.Status.Endpoints == nil {
 		t.Fatal("missing endpoints")
@@ -384,6 +411,268 @@ func TestReconcileReportsReadyAndEndpoints(t *testing.T) {
 	}
 	if updated.Status.Endpoints.WHEPPath != "/chrono-trigger/whep" {
 		t.Fatalf("WHEP path = %q", updated.Status.Endpoints.WHEPPath)
+	}
+}
+
+func TestReadinessWaitsForCurrentDeploymentRollout(t *testing.T) {
+	session, c, r := reconcileWithPod(t,
+		readyContainer("session"), readyContainer("audio-relay"),
+		readyContainer("local-media"), readyContainer("input-health"),
+	)
+	ctx := context.Background()
+	var deployment appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKeyFromObject(session), &deployment); err != nil {
+		t.Fatal(err)
+	}
+	deployment.Generation = 2
+	if err := c.Update(ctx, &deployment); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name               string
+		applied, observed  int64
+		updated, available int32
+		wantReady          bool
+	}{
+		{"cache behind applied generation", 3, 2, 1, 1, false},
+		{"deployment controller has not observed spec", 2, 1, 1, 1, false},
+		{"old pod still available", 2, 2, 0, 1, false},
+		{"new pod not yet available", 2, 2, 1, 0, false},
+		{"rollout completed", 2, 2, 1, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := c.Get(ctx, client.ObjectKeyFromObject(session), &deployment); err != nil {
+				t.Fatal(err)
+			}
+			deployment.Status.ObservedGeneration = tc.observed
+			deployment.Status.UpdatedReplicas = tc.updated
+			deployment.Status.AvailableReplicas = tc.available
+			if err := c.Status().Update(ctx, &deployment); err != nil {
+				t.Fatal(err)
+			}
+			var current v1alpha1.RetroSession
+			if err := c.Get(ctx, client.ObjectKeyFromObject(session), &current); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.refreshStatus(ctx, &current, tc.applied); err != nil {
+				t.Fatal(err)
+			}
+			got := getSession(t, c, session)
+			if (got.Status.Phase == v1alpha1.PhaseReady) != tc.wantReady {
+				t.Fatalf("phase=%s reason=%s, want ready=%t", got.Status.Phase, got.Status.Reason, tc.wantReady)
+			}
+			if !tc.wantReady && got.Status.Reason != "DeploymentRolloutPending" {
+				t.Fatalf("unexpected reason: %s", got.Status.Reason)
+			}
+		})
+	}
+}
+
+func TestReconcileReportsEmulatorNotReady(t *testing.T) {
+	session, c, r := reconcileWithPod(t,
+		unreadyContainer("session", "ContainerCreating"),
+		readyContainer("audio-relay"),
+		readyContainer("local-media"),
+		readyContainer("input-health"),
+	)
+
+	result := reconcileSession(t, r, session)
+	if result.RequeueAfter == 0 {
+		t.Fatal("expected a requeue while the emulator is not ready")
+	}
+
+	updated := getSession(t, c, session)
+	if updated.Status.Phase != v1alpha1.PhasePending || updated.Status.Reason != "EmulatorNotReady" {
+		t.Fatalf("unexpected status: %s/%s (%s)", updated.Status.Phase, updated.Status.Reason, updated.Status.Message)
+	}
+	if !strings.Contains(updated.Status.Message, "session container is waiting: ContainerCreating") {
+		t.Fatalf("message does not explain the emulator failure: %q", updated.Status.Message)
+	}
+	assertComponentCondition(t, updated, conditionEmulatorReady, metav1.ConditionFalse, "EmulatorNotReady")
+	assertComponentCondition(t, updated, conditionInputAgentReady, metav1.ConditionTrue, "InputAgentReady")
+	assertComponentCondition(t, updated, conditionMediaReady, metav1.ConditionTrue, "MediaReady")
+}
+
+func TestReconcileReportsInputAgentNotReady(t *testing.T) {
+	session, c, r := reconcileWithPod(t,
+		readyContainer("session"),
+		readyContainer("audio-relay"),
+		readyContainer("local-media"),
+		unreadyContainer("input-health", "ContainerCreating"),
+	)
+
+	reconcileSession(t, r, session)
+
+	updated := getSession(t, c, session)
+	if updated.Status.Phase != v1alpha1.PhasePending || updated.Status.Reason != "InputAgentNotReady" {
+		t.Fatalf("unexpected status: %s/%s (%s)", updated.Status.Phase, updated.Status.Reason, updated.Status.Message)
+	}
+	if !strings.Contains(updated.Status.Message, "input-health container is waiting: ContainerCreating") {
+		t.Fatalf("message does not explain the input agent failure: %q", updated.Status.Message)
+	}
+	assertComponentCondition(t, updated, conditionEmulatorReady, metav1.ConditionTrue, "EmulatorReady")
+	assertComponentCondition(t, updated, conditionInputAgentReady, metav1.ConditionFalse, "InputAgentNotReady")
+	assertComponentCondition(t, updated, conditionMediaReady, metav1.ConditionTrue, "MediaReady")
+}
+
+func TestReconcileReportsMediaNotReadyWithoutFailingSession(t *testing.T) {
+	session, c, r := reconcileWithPod(t,
+		readyContainer("session"),
+		unreadyContainer("audio-relay", "ContainerCreating"),
+		readyContainer("local-media"),
+		readyContainer("input-health"),
+	)
+
+	result := reconcileSession(t, r, session)
+	if result.RequeueAfter == 0 {
+		t.Fatal("expected a requeue while the media path recovers")
+	}
+
+	updated := getSession(t, c, session)
+	if updated.Status.Phase != v1alpha1.PhasePending || updated.Status.Reason != "MediaNotReady" {
+		t.Fatalf("unexpected status: %s/%s (%s)", updated.Status.Phase, updated.Status.Reason, updated.Status.Message)
+	}
+	if !strings.Contains(updated.Status.Message, "audio-relay container is waiting: ContainerCreating") {
+		t.Fatalf("message does not explain the media failure: %q", updated.Status.Message)
+	}
+	assertComponentCondition(t, updated, conditionEmulatorReady, metav1.ConditionTrue, "EmulatorReady")
+	assertComponentCondition(t, updated, conditionInputAgentReady, metav1.ConditionTrue, "InputAgentReady")
+	assertComponentCondition(t, updated, conditionMediaReady, metav1.ConditionFalse, "MediaNotReady")
+
+	// A shared media outage must not replace the Pod or restart the emulator.
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: session.Namespace, Name: "chrono-trigger-test"}, &pod); err != nil {
+		t.Fatalf("session Pod was removed: %v", err)
+	}
+	if pod.Status.ContainerStatuses[0].Name != "session" || !pod.Status.ContainerStatuses[0].Ready {
+		t.Fatal("running emulator must stay up while the media path is unavailable")
+	}
+}
+
+func TestReconcileDoesNotFailRunningSessionWhenMediaProbeTripsProgressDeadline(t *testing.T) {
+	session, c, r := reconcileWithPod(t,
+		readyContainer("session"),
+		probeFailingContainer("audio-relay"),
+		readyContainer("local-media"),
+		readyContainer("input-health"),
+	)
+
+	var deployment appsv1.Deployment
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &deployment); err != nil {
+		t.Fatal(err)
+	}
+	deployment.Status.Conditions = []appsv1.DeploymentCondition{{
+		Type:    appsv1.DeploymentProgressing,
+		Status:  corev1.ConditionFalse,
+		Reason:  "ProgressDeadlineExceeded",
+		Message: "ReplicaSet has timed out progressing",
+	}}
+	if err := c.Status().Update(context.Background(), &deployment); err != nil {
+		t.Fatalf("update Deployment status: %v", err)
+	}
+
+	reconcileSession(t, r, session)
+
+	updated := getSession(t, c, session)
+	if updated.Status.Phase == v1alpha1.PhaseFailed {
+		t.Fatalf("running session was marked Failed: %s", updated.Status.Message)
+	}
+	if updated.Status.Phase != v1alpha1.PhasePending || updated.Status.Reason != "MediaNotReady" {
+		t.Fatalf("unexpected status: %s/%s (%s)", updated.Status.Phase, updated.Status.Reason, updated.Status.Message)
+	}
+	if !strings.Contains(updated.Status.Message, "audio-relay readiness probe is failing") {
+		t.Fatalf("message does not explain the media probe failure: %q", updated.Status.Message)
+	}
+}
+
+func reconcileWithPod(t *testing.T, statuses ...corev1.ContainerStatus) (*v1alpha1.RetroSession, client.Client, *RetroSessionReconciler) {
+	t.Helper()
+	session := newSession()
+	c := newTestClient(t, session, newBoundPVC())
+	r := testReconciler(c, testScheme(t))
+	reconcileSession(t, r, session)
+	createSessionPod(t, c, session, statuses...)
+	return session, c, r
+}
+
+func createSessionPod(t *testing.T, c client.Client, session *v1alpha1.RetroSession, statuses ...corev1.ContainerStatus) *corev1.Pod {
+	t.Helper()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "chrono-trigger-test",
+			Namespace: session.Namespace,
+			Labels:    map[string]string{sessionLabel: session.Name},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{Name: "session"}, {Name: "audio-relay"}, {Name: "local-media"}, {Name: "input-health"},
+		}},
+	}
+	if err := c.Create(context.Background(), pod); err != nil {
+		t.Fatalf("create Pod: %v", err)
+	}
+	pod.Status = corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: statuses}
+	if err := c.Status().Update(context.Background(), pod); err != nil {
+		t.Fatalf("update Pod status: %v", err)
+	}
+	var deployment appsv1.Deployment
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &deployment); err != nil {
+		t.Fatal(err)
+	}
+	deployment.Status.ObservedGeneration = deployment.Generation
+	deployment.Status.Replicas = 1
+	deployment.Status.UpdatedReplicas = 1
+	deployment.Status.ReadyReplicas = 1
+	deployment.Status.AvailableReplicas = 1
+	if err := c.Status().Update(context.Background(), &deployment); err != nil {
+		t.Fatal(err)
+	}
+	return pod
+}
+
+func readyContainer(name string) corev1.ContainerStatus {
+	return corev1.ContainerStatus{
+		Name:  name,
+		Ready: true,
+		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+	}
+}
+
+func probeFailingContainer(name string) corev1.ContainerStatus {
+	return corev1.ContainerStatus{
+		Name:  name,
+		Ready: false,
+		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+	}
+}
+
+func unreadyContainer(name, reason string) corev1.ContainerStatus {
+	return corev1.ContainerStatus{
+		Name:  name,
+		Ready: false,
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+			Reason:  reason,
+			Message: reason + " detail",
+		}},
+	}
+}
+
+func getSession(t *testing.T, c client.Client, session *v1alpha1.RetroSession) v1alpha1.RetroSession {
+	t.Helper()
+	var updated v1alpha1.RetroSession
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &updated); err != nil {
+		t.Fatal(err)
+	}
+	return updated
+}
+
+func assertComponentCondition(t *testing.T, session v1alpha1.RetroSession, conditionType string, status metav1.ConditionStatus, reason string) {
+	t.Helper()
+	condition := meta.FindStatusCondition(session.Status.Conditions, conditionType)
+	if condition == nil {
+		t.Fatalf("missing %s condition: %+v", conditionType, session.Status.Conditions)
+	}
+	if condition.Status != status || condition.Reason != reason {
+		t.Fatalf("%s = %s/%s, want %s/%s", conditionType, condition.Status, condition.Reason, status, reason)
 	}
 }
 

@@ -26,7 +26,9 @@ The input agent translates browser events into a Linux virtual gamepad.
 RetroArch publishes to MediaMTX inside the session Pod; the relay copies H.264
 video, converts AAC audio to Opus and publishes to shared MediaMTX for browser
 playback. The relay can reconnect when the shared media server restarts without
-restarting the emulator.
+restarting the emulator. Session readiness reports the emulator, input agent and
+media path separately; a media outage marks the session not ready without
+restarting the running game.
 
 ## Project layout
 

@@ -113,7 +113,8 @@ type RetroSessionStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 
-	// Conditions includes the standard Ready condition.
+	// Conditions includes the aggregate Ready condition and the per-component
+	// EmulatorReady, InputAgentReady and MediaReady conditions.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 

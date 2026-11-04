@@ -43,11 +43,29 @@ spec:
 
 ### Status
 
-`status.phase` is `Pending`, `Ready` or `Failed`. The `Ready` condition and
-`status.reason`/`status.message` explain the current state, including concrete
-failures such as `SaveClaimNotFound`, `DeploymentReconcileFailed`,
-`ServiceReconcileFailed`, `ProgressDeadlineExceeded`, `ImagePullBackOff`,
-`CrashLoopBackOff` and unschedulable Pods.
+`status.phase` is `Pending`, `Ready` or `Failed`. The `Ready` condition requires
+the current Deployment rollout to be available and these component conditions:
+
+- `EmulatorReady`: the `session` container's readiness probe sees the RetroArch
+  process.
+- `InputAgentReady`: the `input-health` sidecar can open a TCP connection to the
+  input agent on `127.0.0.1:8765`.
+- `MediaReady`: the `audio-relay` readiness probe checks the Pod-local RTMP
+  listener and both video and audio from the shared MediaMTX stream.
+
+`status.reason`/`status.message` report the first unavailable component
+(`EmulatorNotReady`, `InputAgentNotReady` or `MediaNotReady`),
+`DeploymentRolloutPending`, or a concrete failure such as `SaveClaimNotFound`,
+`DeploymentReconcileFailed`, `ServiceReconcileFailed`,
+`ProgressDeadlineExceeded`, `ImagePullBackOff`, `CrashLoopBackOff` and
+unschedulable Pods. A progress deadline is not treated as a session failure
+while the emulator container is still running; the component condition explains
+the outage instead.
+
+A live Minikube check with an isolated GBA session confirmed that a shared
+MediaMTX outage reports `MediaNotReady` and recovers without restarting the
+session Pod. A paused Deployment update remained `Pending` while its old Pod
+was ready, then became `Ready` after the replacement rollout completed.
 
 `status.endpoints` is the frontend contract:
 
@@ -79,6 +97,16 @@ endpoints:
   created (so `WaitForFirstConsumer` storage can bind it), but the session stays
   `Pending` with reason `SaveClaimNotBound`.
 - Watches the save PVC, so a claim that binds later triggers another reconcile.
+- Watches the session Pod and requeues while the session is not `Ready`, so a
+  recovered media path is observed even without a Pod update.
+- Uses readiness probes, not liveness probes, for the emulator, input agent and
+  media path. A failing probe removes the Pod from the input Service endpoints
+  without restarting it, and the `Recreate` strategy only replaces the Pod when
+  the Deployment spec changes. A shared MediaMTX outage therefore does not
+  restart a running game.
+- Runs a lightweight `input-health` sidecar with the session image so the input
+  agent has an independent readiness signal without changing the combined
+  agent/emulator container.
 - Never deletes the save PVC. Deleting the `RetroSession` removes the emulator
   and input Service only.
 - Skips unchanged status writes, so a steady-state session does not reconcile in
@@ -217,17 +245,20 @@ make build
 
 `controller-gen` v0.23.0 and Go 1.27 were used for the pilot. The unit tests
 use controller-runtime's fake client and cover creation, status/endpoints,
-missing and pending claims, repair, foreign-resource refusal, readiness,
-failure reporting, GBA core selection, and spec validation.
+missing and pending claims, repair, foreign-resource refusal, per-component
+readiness and media recovery, failure reporting, GBA core selection, and spec
+validation.
 
 ## Shared media recovery
 
 Each session's local MediaMTX receives RetroArch's RTMP stream. The audio relay
 reads that stream and retries its connection to the shared MediaMTX, so a shared
-server restart does not require restarting RetroArch. Deploying this version
-changes the session Pod template and therefore replaces running Pods: save game
-progress before upgrading. The session Pod also needs the configured local media
-image available on the node when the pull policy is `Never`.
+server restart does not require restarting RetroArch. If the relay cannot
+probe the shared stream, `MediaReady` is false and the Pod is removed from the
+input Service endpoints; the Pod is not restarted. Deploying this version changes
+the session Pod template and therefore replaces running Pods: save game progress
+before upgrading. The session Pod also needs the configured local media image
+available on the node when the pull policy is `Never`.
 
 To exercise the network topology without changing Kubernetes workloads, run
 `bash operator/tests/media-recovery.sh`. It uses Docker, the local

@@ -68,6 +68,13 @@ done
 wait_ready
 pass "session $session is Ready"
 
+for condition in Ready EmulatorReady InputAgentReady MediaReady; do
+  status=$(field "{.status.conditions[?(@.type==\"$condition\")].status}")
+  [[ $status == True ]] ||
+    fail "condition $condition is not True: $status"
+done
+pass "emulator, input agent and media path conditions are all True"
+
 generation=$(field '{.metadata.generation}')
 observed=$(field '{.status.observedGeneration}')
 [[ -n $generation && $generation == "$observed" ]] ||

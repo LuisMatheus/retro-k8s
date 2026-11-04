@@ -38,6 +38,13 @@ const (
 	nameLabel      = "app.kubernetes.io/name"
 	nameValue      = "retrosession"
 	fieldOwner     = "retrosession-operator"
+
+	mediaRTSPPort = 8554
+
+	conditionReady           = "Ready"
+	conditionEmulatorReady   = "EmulatorReady"
+	conditionInputAgentReady = "InputAgentReady"
+	conditionMediaReady      = "MediaReady"
 )
 
 // SessionConfig controls the session Pods created by the operator.
@@ -112,7 +119,8 @@ func (r *RetroSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	claimPending := pvc.Status.Phase != corev1.ClaimBound
 
-	if err := r.reconcileDeployment(ctx, &session); err != nil {
+	deploymentGeneration, err := r.reconcileDeployment(ctx, &session)
+	if err != nil {
 		return r.setPhase(ctx, &session, v1alpha1.PhaseFailed, "DeploymentReconcileFailed", err.Error(), ctrl.Result{RequeueAfter: 30 * time.Second})
 	}
 	if err := r.reconcileService(ctx, &session); err != nil {
@@ -128,7 +136,7 @@ func (r *RetroSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			ctrl.Result{RequeueAfter: 10 * time.Second})
 	}
 
-	result, err := r.refreshStatus(ctx, &session)
+	result, err := r.refreshStatus(ctx, &session, deploymentGeneration)
 	if err != nil {
 		logger.Error(err, "could not update RetroSession status")
 	}
@@ -141,8 +149,23 @@ func (r *RetroSessionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1alpha1.RetroSession{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.mapPod)).
 		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(r.mapPVC)).
 		Complete(r)
+}
+
+func (r *RetroSessionReconciler) mapPod(ctx context.Context, obj client.Object) []reconcile.Request {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil
+	}
+	name := pod.Labels[sessionLabel]
+	if name == "" {
+		return nil
+	}
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Namespace: pod.Namespace, Name: name},
+	}}
 }
 
 func (r *RetroSessionReconciler) mapPVC(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -166,11 +189,11 @@ func (r *RetroSessionReconciler) mapPVC(ctx context.Context, obj client.Object) 
 	return requests
 }
 
-func (r *RetroSessionReconciler) reconcileDeployment(ctx context.Context, session *v1alpha1.RetroSession) error {
+func (r *RetroSessionReconciler) reconcileDeployment(ctx context.Context, session *v1alpha1.RetroSession) (int64, error) {
 	desired := r.desiredDeployment(session)
 	desired.TypeMeta = metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"}
 	if err := controllerutil.SetControllerReference(session, desired, r.Scheme); err != nil {
-		return fmt.Errorf("set owner on Deployment %s: %w", desired.Name, err)
+		return 0, fmt.Errorf("set owner on Deployment %s: %w", desired.Name, err)
 	}
 
 	var existing appsv1.Deployment
@@ -178,21 +201,21 @@ func (r *RetroSessionReconciler) reconcileDeployment(ctx context.Context, sessio
 	created := apierrors.IsNotFound(err)
 	if err == nil {
 		if !metav1.IsControlledBy(&existing, session) {
-			return fmt.Errorf("Deployment %s/%s already exists and is not controlled by RetroSession %s", existing.Namespace, existing.Name, session.Name)
+			return 0, fmt.Errorf("Deployment %s/%s already exists and is not controlled by RetroSession %s", existing.Namespace, existing.Name, session.Name)
 		}
 	} else if !created {
-		return err
+		return 0, err
 	}
 
 	// Server-side apply keeps the operator from removing API-defaulted fields
 	// on every reconcile.
 	if err := r.Patch(ctx, desired, client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
-		return fmt.Errorf("apply Deployment %s: %w", desired.Name, err)
+		return 0, fmt.Errorf("apply Deployment %s: %w", desired.Name, err)
 	}
 	if created {
 		r.event(session, corev1.EventTypeNormal, "DeploymentCreated", "Created emulator Deployment %s", desired.Name)
 	}
-	return nil
+	return desired.Generation, nil
 }
 
 func (r *RetroSessionReconciler) reconcileService(ctx context.Context, session *v1alpha1.RetroSession) error {
@@ -222,7 +245,7 @@ func (r *RetroSessionReconciler) reconcileService(ctx context.Context, session *
 	return nil
 }
 
-func (r *RetroSessionReconciler) refreshStatus(ctx context.Context, session *v1alpha1.RetroSession) (ctrl.Result, error) {
+func (r *RetroSessionReconciler) refreshStatus(ctx context.Context, session *v1alpha1.RetroSession, appliedGeneration int64) (ctrl.Result, error) {
 	var deployment appsv1.Deployment
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: session.Name}, &deployment); err != nil {
 		return ctrl.Result{}, err
@@ -255,34 +278,55 @@ func (r *RetroSessionReconciler) refreshStatus(ctx context.Context, session *v1a
 		session.Status.PodName = pod.Name
 	}
 
+	components := sessionComponentsFor(pod)
+
 	phase := v1alpha1.PhasePending
-	reason := "DeploymentPending"
-	message := "Waiting for the emulator Deployment to become available"
+	reason := "SessionNotReady"
+	message := "Waiting for the emulator, input agent and media path to become ready"
 	conditionStatus := metav1.ConditionFalse
 
 	if failure := podFailure(pod, &deployment); failure != "" {
 		phase = v1alpha1.PhaseFailed
 		reason = "SessionFailed"
 		message = failure
-	} else if deployment.Status.ObservedGeneration >= deployment.Generation && deployment.Status.AvailableReplicas >= 1 {
+	} else if components.Emulator.Ready && components.InputAgent.Ready && components.Media.Ready &&
+		deployment.Generation >= appliedGeneration && deployment.Status.ObservedGeneration >= deployment.Generation &&
+		deployment.Status.Replicas == 1 && deployment.Status.UpdatedReplicas == 1 &&
+		deployment.Status.ReadyReplicas == 1 && deployment.Status.AvailableReplicas == 1 {
 		phase = v1alpha1.PhaseReady
 		reason = "SessionReady"
-		message = fmt.Sprintf("Emulator is ready; input Service %s port %d", inputServiceName(session.Name), r.Config.AgentPort)
+		message = fmt.Sprintf("Emulator, input agent and media path are ready; input Service %s port %d", inputServiceName(session.Name), r.Config.AgentPort)
 		conditionStatus = metav1.ConditionTrue
-	} else if deployment.Status.ObservedGeneration < deployment.Generation {
-		message = "Waiting for the Deployment controller to observe the latest spec"
+	} else {
+		switch {
+		case !components.Emulator.Ready:
+			reason = "EmulatorNotReady"
+			message = components.Emulator.Message
+		case !components.InputAgent.Ready:
+			reason = "InputAgentNotReady"
+			message = components.InputAgent.Message
+		case !components.Media.Ready:
+			reason = "MediaNotReady"
+			message = components.Media.Message
+		default:
+			reason = "DeploymentRolloutPending"
+			message = "Waiting for the latest Deployment revision to become available"
+		}
 	}
 
 	session.Status.Phase = phase
 	session.Status.Reason = reason
 	session.Status.Message = message
 	meta.SetStatusCondition(&session.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
+		Type:               conditionReady,
 		Status:             conditionStatus,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: session.Generation,
 	})
+	setComponentCondition(&session.Status.Conditions, conditionEmulatorReady, session.Generation, components.Emulator)
+	setComponentCondition(&session.Status.Conditions, conditionInputAgentReady, session.Generation, components.InputAgent)
+	setComponentCondition(&session.Status.Conditions, conditionMediaReady, session.Generation, components.Media)
 
 	if err := r.updateStatus(ctx, session, *oldStatus); err != nil {
 		return ctrl.Result{}, err
@@ -294,7 +338,108 @@ func (r *RetroSessionReconciler) refreshStatus(ctx context.Context, session *v1a
 		}
 		r.event(session, eventType, reason, "%s", message)
 	}
-	return ctrl.Result{}, nil
+
+	// Requeue while the session is not Ready so media recovery is observed even
+	// if the Pod watch misses an update. The Pod itself is never restarted just
+	// because a readiness probe is failing.
+	switch phase {
+	case v1alpha1.PhaseReady:
+		return ctrl.Result{}, nil
+	case v1alpha1.PhaseFailed:
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	default:
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+}
+
+// componentStatus is the readiness of one independent part of a session.
+type componentStatus struct {
+	Ready   bool
+	Reason  string
+	Message string
+}
+
+// sessionComponents groups the independently observed parts of a session.
+type sessionComponents struct {
+	Emulator   componentStatus
+	InputAgent componentStatus
+	Media      componentStatus
+}
+
+func sessionComponentsFor(pod *corev1.Pod) sessionComponents {
+	emulator := containerComponent(pod, "emulator", "session")
+	emulator.Reason = "EmulatorNotReady"
+	if emulator.Ready {
+		emulator.Reason = "EmulatorReady"
+	}
+
+	inputAgent := containerComponent(pod, "input agent", "input-health")
+	inputAgent.Reason = "InputAgentNotReady"
+	if inputAgent.Ready {
+		inputAgent.Reason = "InputAgentReady"
+	}
+
+	media := containerComponent(pod, "media path", "audio-relay", "local-media")
+	media.Reason = "MediaNotReady"
+	if media.Ready {
+		media.Reason = "MediaReady"
+	}
+
+	return sessionComponents{Emulator: emulator, InputAgent: inputAgent, Media: media}
+}
+
+// containerComponent reports whether every named container is Ready and, when
+// it is not, a message suitable for RetroSession.status.
+func containerComponent(pod *corev1.Pod, label string, names ...string) componentStatus {
+	if pod == nil {
+		return componentStatus{Message: fmt.Sprintf("Waiting for the session Pod to start the %s", label)}
+	}
+	statuses := make(map[string]corev1.ContainerStatus, len(pod.Status.ContainerStatuses))
+	for _, status := range pod.Status.ContainerStatuses {
+		statuses[status.Name] = status
+	}
+
+	problems := make([]string, 0, len(names))
+	for _, name := range names {
+		status, ok := statuses[name]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("%s container has not started", name))
+			continue
+		}
+		if status.Ready {
+			continue
+		}
+		switch {
+		case status.State.Waiting != nil:
+			detail := status.State.Waiting.Reason
+			if status.State.Waiting.Message != "" {
+				detail += ": " + status.State.Waiting.Message
+			}
+			problems = append(problems, fmt.Sprintf("%s container is waiting: %s", name, detail))
+		case status.State.Terminated != nil:
+			problems = append(problems, fmt.Sprintf("%s container terminated with exit code %d", name, status.State.Terminated.ExitCode))
+		default:
+			problems = append(problems, fmt.Sprintf("%s readiness probe is failing", name))
+		}
+	}
+	if len(problems) == 0 {
+		return componentStatus{Ready: true, Message: fmt.Sprintf("The %s is ready", label)}
+	}
+	return componentStatus{Message: strings.Join(problems, "; ")}
+}
+
+func setComponentCondition(conditions *[]metav1.Condition, conditionType string, generation int64, status componentStatus) {
+	conditionStatus := metav1.ConditionFalse
+	if status.Ready {
+		conditionStatus = metav1.ConditionTrue
+	}
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               conditionType,
+		Status:             conditionStatus,
+		Reason:             status.Reason,
+		Message:            status.Message,
+		ObservedGeneration: generation,
+	})
 }
 
 func (r *RetroSessionReconciler) setPhase(ctx context.Context, session *v1alpha1.RetroSession, phase v1alpha1.SessionPhase, reason, message string, result ctrl.Result) (ctrl.Result, error) {
@@ -314,12 +459,23 @@ func (r *RetroSessionReconciler) setPhase(ctx context.Context, session *v1alpha1
 		conditionStatus = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&session.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
+		Type:               conditionReady,
 		Status:             conditionStatus,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: session.Generation,
 	})
+	// Component conditions describe the running Pod. They do not apply while a
+	// session-level prerequisite (spec, claim or Deployment) is blocking it.
+	for _, conditionType := range []string{conditionEmulatorReady, conditionInputAgentReady, conditionMediaReady} {
+		meta.SetStatusCondition(&session.Status.Conditions, metav1.Condition{
+			Type:               conditionType,
+			Status:             metav1.ConditionFalse,
+			Reason:             reason,
+			Message:            message,
+			ObservedGeneration: session.Generation,
+		})
+	}
 
 	if err := r.updateStatus(ctx, session, *oldStatus); err != nil {
 		return ctrl.Result{}, err
@@ -363,6 +519,7 @@ func (r *RetroSessionReconciler) desiredDeployment(session *v1alpha1.RetroSessio
 		logLevel = r.Config.DefaultLogLevel
 	}
 	romPath := path.Join(r.Config.ROMMountPath, session.Spec.ROM)
+	rtspURL := fmt.Sprintf("rtsp://%s:%d/%s", r.Config.MediaService, mediaRTSPPort, session.Name)
 
 	env := []corev1.EnvVar{
 		{Name: "CORE", Value: coreForConsole(session.Spec.Console)},
@@ -446,8 +603,20 @@ func (r *RetroSessionReconciler) desiredDeployment(session *v1alpha1.RetroSessio
 						Image:           r.Config.RelayImage,
 						ImagePullPolicy: r.Config.ImagePullPolicy,
 						Command:         []string{"/bin/sh", "-c"},
-						Args:            []string{fmt.Sprintf("while true; do ffmpeg -nostdin -loglevel warning -i rtmp://127.0.0.1:%d/raw/%s -map 0:v:0 -map 0:a:0 -c:v copy -c:a libopus -ar 48000 -ac 2 -f rtsp -rtsp_transport tcp rtsp://%s:8554/%s; sleep 2; done", r.Config.MediaRTMPPort, session.Name, r.Config.MediaService, session.Name)},
+						Args:            []string{fmt.Sprintf("while true; do ffmpeg -nostdin -loglevel warning -i rtmp://127.0.0.1:%d/raw/%s -map 0:v:0 -map 0:a:0 -c:v copy -c:a libopus -ar 48000 -ac 2 -f rtsp -rtsp_transport tcp %s; sleep 2; done", r.Config.MediaRTMPPort, session.Name, rtspURL)},
 						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
+								Command: []string{"/bin/sh", "-c", fmt.Sprintf(
+									`python3 -c 'import socket; socket.create_connection(("127.0.0.1", %d), timeout=1).close()' && streams=$(timeout 4 ffprobe -v error -rtsp_transport tcp -analyzeduration 0 -probesize 32 -show_entries stream=codec_type -of csv=p=0 %s) && printf '%%s\n' "$streams" | grep -qx video && printf '%%s\n' "$streams" | grep -qx audio`,
+									r.Config.MediaRTMPPort, rtspURL,
+								)},
+							}},
+							InitialDelaySeconds: 15,
+							PeriodSeconds:       10,
+							TimeoutSeconds:      7,
+							FailureThreshold:    3,
+						},
 					}, {
 						Name:            "local-media",
 						Image:           r.Config.LocalMediaImage,
@@ -460,6 +629,20 @@ func (r *RetroSessionReconciler) desiredDeployment(session *v1alpha1.RetroSessio
 							{Name: "MTX_SRT", Value: "no"},
 						},
 						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+					}, {
+						Name:            "input-health",
+						Image:           image,
+						ImagePullPolicy: r.Config.ImagePullPolicy,
+						Command:         []string{"/bin/sleep", "infinity"},
+						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
+								Command: []string{"/bin/bash", "-c", fmt.Sprintf("exec 3<>/dev/tcp/127.0.0.1/%d", r.Config.AgentPort)},
+							}},
+							InitialDelaySeconds: 2,
+							PeriodSeconds:       5,
+							FailureThreshold:    3,
+						},
 					}},
 					Volumes: []corev1.Volume{
 						{Name: "saves", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: session.Spec.SaveClaimName}}},
@@ -541,6 +724,18 @@ func coreForConsole(console v1alpha1.Console) string {
 	}
 }
 
+func containerRunning(pod *corev1.Pod, name string) bool {
+	if pod == nil {
+		return false
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == name && status.State.Running != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func validateSession(session *v1alpha1.RetroSession) error {
 	if len(session.Name) > 57 {
 		return fmt.Errorf("metadata.name must be at most 57 characters so the input Service name fits")
@@ -583,6 +778,13 @@ func podFailure(pod *corev1.Pod, deployment *appsv1.Deployment) string {
 	if deployment != nil {
 		for _, condition := range deployment.Status.Conditions {
 			if condition.Type == appsv1.DeploymentProgressing && condition.Status == corev1.ConditionFalse && condition.Reason == "ProgressDeadlineExceeded" {
+				// A readiness probe that stays false can trip the rollout
+				// deadline even though the emulator is still running. Let the
+				// component conditions explain the outage instead of declaring
+				// the whole session failed.
+				if containerRunning(pod, "session") {
+					continue
+				}
 				return fmt.Sprintf("Deployment %s failed to progress (%s): %s", deployment.Name, condition.Reason, condition.Message)
 			}
 			if condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue {

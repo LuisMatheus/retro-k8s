@@ -109,7 +109,9 @@ spec:
             description: RetroSessionStatus reports the observed state of a session.
             properties:
               conditions:
-                description: Conditions includes the standard Ready condition.
+                description: Conditions includes the aggregate Ready condition
+                  and the per-component EmulatorReady, InputAgentReady and MediaReady
+                  conditions.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
