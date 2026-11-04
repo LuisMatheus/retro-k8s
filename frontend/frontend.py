@@ -3,7 +3,7 @@
 Inside Kubernetes the frontend lists ``RetroSession`` resources with its
 service account and proxies the browser's input WebSocket and WHEP signaling to
 the session Services. Outside Kubernetes it keeps the static
-``SESSIONS``/``*_INPUT_PORT`` configuration used by Docker Compose.
+``SESSIONS``/``*_INPUT_PORT`` configuration.
 
 The proxy deliberately derives every upstream from the ``RetroSession`` status,
 never from a browser-supplied host or path.
@@ -150,7 +150,7 @@ def _port_value(value: str, default: int) -> int:
 
 
 def static_config_from_env() -> tuple[list[str], dict[str, int], int]:
-    """Read the Compose/direct-mode session configuration."""
+    """Read the static/direct-mode session configuration."""
     names = [name.strip() for name in os.environ.get("SESSIONS", "snes,gba").split(",")]
     ports = {
         "snes": _port_value(os.environ.get("SNES_INPUT_PORT", "8765"), 8765),

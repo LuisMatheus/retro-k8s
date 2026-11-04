@@ -3,14 +3,12 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
-repo_root=$(cd "$script_dir/.." && pwd)
+repo_root=$(cd "$script_dir/../../.." && pwd)
 cd "$repo_root"
 
 profile=${MINIKUBE_PROFILE:-minikube}
 namespace=retro-k8s
 node_input_root=${NODE_INPUT_ROOT:-/run/retro-k8s-input}
-games_dir=${GAMES_DIR:-$HOME/Documents/games}
-rom_dir=${ROM_DIR:-$games_dir}
 operator_image=${OPERATOR_IMAGE:-retro-k8s-poc/operator:pilot}
 session_image=${SESSION_IMAGE:-retro-k8s-poc/retroarch-input:pilot}
 local_media_image=${LOCAL_MEDIA_IMAGE:-bluenviron/mediamtx:1}
@@ -20,7 +18,7 @@ attach=true
 
 usage() {
   cat <<'EOF'
-Usage: operator/deploy.sh [options]
+Usage: deploy/kubernetes/local/deploy-operator.sh [options]
 
   --no-build     Do not rebuild the operator image
   --no-load      Do not load the operator image into the Minikube profile
@@ -32,7 +30,7 @@ Environment:
   OPERATOR_IMAGE    Operator image (default: retro-k8s-poc/operator:pilot)
   SESSION_IMAGE     Default emulator image for sessions
   LOCAL_MEDIA_IMAGE Pod-local MediaMTX image (default: bluenviron/mediamtx:1)
-  ROM_DIR           ROM library root to attach (default: ~/Documents/games)
+  GAMES_DIR         Shared ROM library root to attach (required; ROM_DIR is a legacy alias)
   NODE_INPUT_ROOT   Node hostPath root (default: /run/retro-k8s-input)
   PUID/PGID/INPUT_GID, LOG_LEVEL, MIN_HOLD_MS
                     Session identity and input defaults, read from .env first
@@ -70,6 +68,14 @@ from_env_or_file() {
   printf '%s' "$value"
 }
 
+games_dir=$(from_env_or_file GAMES_DIR)
+[[ -n $games_dir ]] || games_dir=$(from_env_or_file ROM_DIR)
+[[ -n $games_dir ]] || {
+  echo "Set GAMES_DIR in .env or the environment to the shared ROM library root." >&2
+  exit 1
+}
+rom_dir=$games_dir
+
 uid=$(from_env_or_file PUID); uid=${uid:-1000}
 gid=$(from_env_or_file PGID); gid=${gid:-1001}
 input_gid=$(from_env_or_file INPUT_GID)
@@ -83,6 +89,7 @@ min_hold=$(from_env_or_file MIN_HOLD_MS); min_hold=${min_hold:-40}
 [[ $min_hold =~ ^[0-9]+$ ]] || { echo "MIN_HOLD_MS must be a number." >&2; exit 1; }
 
 if $attach; then
+  [[ -d $rom_dir ]] || { echo "ROM directory not found: $rom_dir" >&2; exit 1; }
   state=$repo_root/deploy/kubernetes/local/.node-input-state
   [[ -f $state ]] || state=$repo_root/k8s/local/.node-input-state
   [[ -f $state ]] || state=$repo_root/k8s/snes/.node-input-state
@@ -98,13 +105,13 @@ if $attach; then
     fi
     echo "Host input is already attached to the Minikube node."
   else
-    ROM_DIR="$rom_dir" NODE_INPUT_ROOT="$node_input_root" MINIKUBE_PROFILE="$profile" \
+    GAMES_DIR="$rom_dir" ROM_DIR="$rom_dir" NODE_INPUT_ROOT="$node_input_root" MINIKUBE_PROFILE="$profile" \
       "$repo_root/deploy/kubernetes/local/attach-node-input.sh" attach
   fi
 fi
 
 if $build; then
-  docker build -t "$operator_image" "$script_dir"
+  docker build -t "$operator_image" "$repo_root/operator"
 fi
 docker image inspect "$operator_image" >/dev/null
 if $load; then
@@ -192,4 +199,4 @@ echo
 echo "Apply a session with:"
 echo "  kubectl --context $profile apply -f $repo_root/deploy/kubernetes/samples/snes/chrono-trigger-saves.yaml"
 echo "  kubectl --context $profile apply -f $repo_root/deploy/kubernetes/samples/snes/retrosession-snes.yaml"
-echo "Then run: bash $script_dir/verify.sh"
+echo "Then run: bash $repo_root/operator/verify-snes-session.sh"

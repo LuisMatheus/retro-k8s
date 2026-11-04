@@ -1,4 +1,0 @@
-# Compatibility entry point for the local Compose development stack.
-name: retro-k8s-poc
-include:
-  - path: deploy/compose/compose.yaml

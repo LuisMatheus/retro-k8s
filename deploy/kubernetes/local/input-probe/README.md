@@ -7,7 +7,12 @@ and its Python input driver. It needs no ROM, signing secret or running game.
 ## Run
 
 From the project root, start the profile and load the local session image. If
-the image is missing, build it first with `docker compose build retroarch-snes`.
+the image is missing, build it first:
+
+```bash
+docker build -t retro-k8s-poc/retroarch-input:latest --target retroarch-input \
+  -f runtimes/retroarch/Dockerfile .
+```
 
 ```bash
 export MINIKUBE_PROFILE=minikube
@@ -39,8 +44,8 @@ and up and confirmed device removal. Use this exception only for the trusted
 single-session pilot.
 
 The launcher defaults to your current UID/GID and the numeric group owning
-`/dev/uinput`. If Compose uses different IDs, export `PUID`, `PGID` and
-`INPUT_GID` with the corresponding values from your local configuration.
+`/dev/uinput`. If your local configuration uses different IDs, export `PUID`,
+`PGID` and `INPUT_GID` with the corresponding values.
 Use `bash deploy/kubernetes/local/input-probe/run.sh --render` to inspect the Pod manifest.
 
 The launcher checks the host and node paths, then creates a uniquely named

@@ -21,4 +21,4 @@ generatorOptions:
   disableNameSuffixHash: true
 EOF
 kubectl --context "$profile" apply -k "$overlay"
-echo "Shared platform applied. The frontend requires the retro-session-secret created by operator/deploy.sh."
+echo "Shared platform applied. The frontend requires the retro-session-secret created by deploy/kubernetes/local/deploy-operator.sh."

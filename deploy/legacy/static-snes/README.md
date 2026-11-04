@@ -12,13 +12,9 @@ the session Deployment uses one replica with the `Recreate` strategy.
 
 - A running Docker-backed Minikube profile. The input probe must already pass;
   the pilot uses the same non-root, privileged container exception.
-- The session and frontend images. Build them once with Compose if needed.
-- A ROM and the values in `.env` (`SNES_ROM`, `PUID`, `PGID`, `INPUT_GID`,
-  `INPUT_TOKEN_SECRET`).
-
-```bash
-docker compose build retroarch-snes frontend
-```
+- The session and frontend images. Build them with `deploy.sh --build` if needed.
+- A ROM and the values in `.env` (`GAMES_DIR`, `SNES_ROM`, `PUID`, `PGID`,
+  `INPUT_GID`, `INPUT_TOKEN_SECRET`).
 
 ## Deploy
 
@@ -64,12 +60,12 @@ The script:
 Useful options:
 
 ```bash
-bash deploy/legacy/static-snes/deploy.sh --rom ~/Documents/games/snes/other-game.sfc
+bash deploy/legacy/static-snes/deploy.sh --rom "$GAMES_DIR/snes/other-game.sfc"
 bash deploy/legacy/static-snes/deploy.sh --build          # rebuild images first
 bash deploy/legacy/static-snes/deploy.sh --no-attach      # node paths already attached
 ```
 
-The default ROM is `$HOME/Documents/games/snes/$SNES_ROM`. Only the ROM's parent
+The default ROM is `$GAMES_DIR/snes/$SNES_ROM`. Only the ROM's parent
 directory is exposed to the node, read-only. If you change ROM directories,
 detach and reattach first:
 
@@ -118,7 +114,7 @@ save PVC are kept unless `--delete-data` is specified.
 - The emulator container is privileged because the probe showed that a regular
   Pod cannot open the attached `/dev/uinput`. It still runs as the non-root
   session user with the host input group.
-- The save PVC starts empty. Existing Compose saves are not copied into it
+- The save PVC starts empty. Existing host saves are not copied into it
   automatically; the pilot only proves that new saves survive Pod replacement.
 - Browser access targets the local workstation. Remote access requires
   authentication, protected routes and appropriate WebRTC networking.

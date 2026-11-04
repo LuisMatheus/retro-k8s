@@ -7,7 +7,6 @@ repo_root=$(cd "$script_dir/../../.." && pwd)
 cd "$repo_root"
 
 profile=${MINIKUBE_PROFILE:-minikube}
-games_dir=${GAMES_DIR:-$HOME/Documents/games}
 rom=""
 build=false
 load=true
@@ -18,7 +17,7 @@ usage() {
 Usage: deploy/legacy/static-snes/deploy.sh [options]
 
   --rom PATH     ROM to expose read-only (default: $GAMES_DIR/snes/$SNES_ROM)
-  --build        Rebuild the session and frontend images with Compose first
+  --build        Rebuild the session and frontend images first
   --no-load      Do not load images into the Minikube profile
   --no-attach    Do not attach host input/ROM paths to the Minikube node
   -h, --help     Show this help
@@ -57,9 +56,13 @@ from_env_or_file() {
   printf '%s' "$value"
 }
 
+games_dir=$(from_env_or_file GAMES_DIR)
+[[ -n $games_dir ]] || games_dir=$(from_env_or_file ROM_DIR)
+
 if [[ -z $rom ]]; then
   rom_name=$(from_env_or_file SNES_ROM)
   [[ -n $rom_name ]] || { echo "Set SNES_ROM in .env or pass --rom PATH." >&2; exit 1; }
+  [[ -n $games_dir ]] || { echo "Set GAMES_DIR in .env or the environment, or pass --rom PATH." >&2; exit 1; }
   rom="$games_dir/snes/$rom_name"
 fi
 [[ -f $rom ]] || { echo "ROM not found: $rom" >&2; exit 1; }
@@ -94,7 +97,9 @@ pad_name=${PAD_NAME:-Retro-K8s Pad snes-k8s}
   { echo "Pad name or allowed origins contain a newline." >&2; exit 1; }
 
 if $build; then
-  docker compose build retroarch-snes frontend
+  docker build -t retro-k8s-poc/retroarch-input:latest --target retroarch-input \
+    -f runtimes/retroarch/Dockerfile .
+  docker build -t retro-k8s-poc/frontend:latest -f frontend/Dockerfile .
 fi
 docker image inspect retro-k8s-poc/retroarch-input:latest >/dev/null
 docker image inspect retro-k8s-poc/frontend:latest >/dev/null
@@ -151,7 +156,7 @@ if $attach; then
   if [[ -f $state ]]; then
     # shellcheck disable=SC1090
     source "$state"
-    if [[ $rom_dir != "$rom_parent" ]]; then
+    if [[ ${rom_dir:-} != "$rom_parent" ]]; then
       echo "Attached ROM directory is $rom_dir, but the legacy session needs $rom_parent." >&2
       echo "Stop active sessions and detach before changing the attachment." >&2
       exit 1
@@ -159,7 +164,7 @@ if $attach; then
     echo "Host input is already attached to the Minikube node."
     echo "To change the ROM directory, run $repo_root/deploy/kubernetes/local/attach-node-input.sh detach first."
   else
-    ROM_DIR="$rom_parent" MINIKUBE_PROFILE="$profile" \
+    GAMES_DIR="$rom_parent" MINIKUBE_PROFILE="$profile" \
       "$repo_root/deploy/kubernetes/local/attach-node-input.sh" attach
   fi
 fi
@@ -219,4 +224,4 @@ fi
 echo
 echo "Saves persist in PVC retro-k8s/snes-saves (mounted at /saves)."
 echo "Logs: kubectl --context $profile -n retro-k8s logs -f deployment/snes"
-echo "Run bash deploy/kubernetes/local/browser.sh and open http://127.0.0.1:18000."
+echo "Run bash deploy/kubernetes/local/port-forward-frontend.sh and open http://127.0.0.1:18000."

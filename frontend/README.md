@@ -6,7 +6,7 @@ the frontend shares its token-signing implementation.
 
 - `browser/`: browser UI, controller handling and stream diagnostics.
 - `frontend.py`: session discovery, public configuration and proxy endpoints.
-- `dev-server.py`: starts the HTTP server in Kubernetes or static Compose mode.
+- `server.py`: starts the HTTP server in Kubernetes or static mode.
 - `Dockerfile`: builds the frontend image from the repository root.
 - `tests/`: frontend and browser tests.
 

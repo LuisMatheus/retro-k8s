@@ -10,14 +10,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # --system-site-packages so the apt-provided evdev (no compiler needed) is visible
 RUN python3 -m venv --system-site-packages /opt/venv
-COPY requirements.txt /tmp/requirements.txt
+COPY input-agent/requirements.txt /tmp/requirements.txt
 RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 
 WORKDIR /app
-COPY agent/ /app/agent/
-COPY input-wrapper.sh /input-wrapper.sh
-RUN chmod +x /input-wrapper.sh
+COPY input-agent/agent/ /app/agent/
+COPY runtimes/retroarch/start-session.sh /start-session.sh
+RUN chmod +x /start-session.sh
 
 ENV PATH="/opt/venv/bin:${PATH}" PYTHONUNBUFFERED=1 \
-    ORIGINAL_ENTRYPOINT=/usr/local/bin/retroarch-entrypoint INPUT_AGENT=1
-ENTRYPOINT ["/input-wrapper.sh"]
+    ORIGINAL_ENTRYPOINT=/usr/local/bin/start-retroarch.sh INPUT_AGENT=1
+ENTRYPOINT ["/start-session.sh"]

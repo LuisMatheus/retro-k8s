@@ -5,11 +5,11 @@ SESSION_SOURCE selects discovery:
   kubernetes - list RetroSession resources with the pod service account and
                proxy input/WHEP through this server (same origin).
   static     - use SESSIONS/SNES_INPUT_PORT/GBA_INPUT_PORT and let the browser
-               connect directly (Docker Compose).
+               connect directly.
   auto       - kubernetes when service-account credentials are present,
                otherwise static. This is the default.
 
-Run from your project root:  python3 frontend/dev-server.py
+Run from your project root:  python3 frontend/server.py
 Reads INPUT_TOKEN_SECRET from the environment or a .env file. The token endpoint
 has NO authentication: never expose this server beyond localhost."""
 from __future__ import annotations

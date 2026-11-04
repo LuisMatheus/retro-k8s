@@ -1,119 +1,168 @@
-# retro-k8s-poc
+# Retro-K8s
 
-Headless emulator sessions with browser video and controller input. The
-`RetroSession` operator manages sessions on Kubernetes, and the frontend
-discovers them through the Kubernetes API. A Docker Compose stack is available
-for local development.
+Retro-K8s runs headless RetroArch game sessions on Kubernetes and streams them
+to a browser. A `RetroSession` custom resource selects a console, ROM and save
+claim; the operator creates the emulator workload and its input Service. The
+frontend discovers sessions and connects the browser to the selected game.
+
+The current target is a **trusted, single-node Linux Minikube pilot**. SNES
+(Snes9x) and GBA (mGBA) cores are included.
+
+## How it works
 
 ```text
-RetroArch SNES/GBA ── RTMP ── MediaMTX ── WebRTC ── browser
-        ↑                                           │
-   virtual gamepad ← uinput ← Python agent ← WebSocket
+RetroSession → operator → session Pod
+                          ├─ RetroArch + input agent
+                          ├─ local MediaMTX  →  FFmpeg audio relay
+                          └───────────────────────────────┐
+                                                          ↓
+browser ← WebRTC ← shared MediaMTX ←──────────────────────┘
+   └─ keyboard / gamepad → frontend proxy → input Service
+                                              └→ virtual gamepad → RetroArch
 ```
 
-Each session runs its input agent and RetroArch in the same container. The
-browser combines keyboard and standard physical gamepad input into a versioned
-logical controller protocol. The agent authenticates the connection, validates
-messages, and creates a Linux virtual gamepad that RetroArch reads through its udev joypad driver. Keyboard/mouse input uses
-the private Xvfb display (`input_driver = "x"`) so host typing cannot bypass the
-browser and trigger RetroArch pause/reset/menu hotkeys.
+Each session mounts a ROM library read-only and a separate writable save PVC.
+The input agent translates browser events into a Linux virtual gamepad.
+RetroArch publishes to MediaMTX inside the session Pod; the relay copies H.264
+video, converts AAC audio to Opus and publishes to shared MediaMTX for browser
+playback. The relay can reconnect when the shared media server restarts without
+restarting the emulator.
 
-## Layout
+## Project layout
 
-- `operator/` contains the `RetroSession` API, controller and operator verification.
-- `deploy/kubernetes/operator/` contains the CRD, RBAC and operator Deployment.
-- `deploy/kubernetes/samples/` contains SNES and GBA session examples.
-- `deploy/kubernetes/platform/` contains shared frontend and MediaMTX resources.
-- `deploy/kubernetes/local/` contains Minikube attachment, browser and probe tools.
-- `deploy/legacy/static-snes/` contains the original static SNES pilot.
-- `runtimes/retroarch/` contains the shared RetroArch image, startup script and
-  RTMP settings for its Snes9x and mGBA cores.
-- `input-agent/` contains the virtual gamepad agent and its tests.
-- [`frontend/`](frontend/README.md) contains the browser interface, discovery/proxy server and tests.
-- `deploy/compose/` contains the optional Docker Compose stack and its MediaMTX
-  configuration. The root `compose.yaml` is its compatibility entry point.
+```text
+operator/                    RetroSession API, controller and tests
+frontend/                    Browser UI, discovery and proxy server
+input-agent/                 WebSocket input and virtual gamepad
+runtimes/retroarch/          RetroArch image, cores and startup scripts
+deploy/
+  kubernetes/
+    operator/                Operator CRD, RBAC and Deployment
+    platform/                Shared frontend and MediaMTX manifests
+    samples/                 SNES and GBA session and save claim examples
+    local/                   Minikube helpers and virtual-controller probe
+  legacy/static-snes/        Original static SNES pilot
+```
 
-For Kubernetes setup and the operator API, start with
-[the operator instructions](operator/README.md). The
-[single-session pilot](deploy/legacy/static-snes/README.md) documents local browser access.
+See the [operator README](operator/README.md) for the API, reconciliation,
+configuration and verification details, and the [frontend README](frontend/README.md)
+for the browser components.
 
-To add another Libretro core, add it to the RetroArch runtime image and extend
-the operator's console API, core mapping and tests. A standalone emulator with
-a different startup process belongs in a separate directory under `runtimes/`;
-integrating it also requires a corresponding operator workload implementation.
-The operator currently assumes RetroArch, so adding a directory alone does not
-make a new runtime available.
+The session image starts `runtimes/retroarch/start-session.sh`, which starts the
+input agent and then `start-retroarch.sh`. For local cluster setup, run
+`deploy/kubernetes/local/deploy-operator.sh` and `deploy-platform.sh`; use
+`port-forward-frontend.sh` to connect a browser.
 
-## Linux host setup
+## Run on Minikube
 
-The host needs uinput, an active udev daemon, `/dev/input`, and `/run/udev`.
-AMD64/ARM64 image support does not guarantee these devices exist, particularly
-inside Docker Desktop's Linux VM.
+These instructions use a Linux host with Docker, Minikube, `kubectl` and
+OpenSSL. The Minikube profile must use the Docker driver. The session image
+requires `/dev/uinput`, `/dev/input` and live udev metadata; it runs privileged
+for this pilot. Ensure you have permission to use the ROMs you provide.
+
+### 1. Prepare the host and configuration
 
 ```bash
 sudo modprobe uinput
 ls -l /dev/uinput /dev/input
 getent group input
-```
-
-The session runs as `PUID:PGID` with the additional `INPUT_GID` group. Ensure the
-host input group can read/write `/dev/uinput` and read `/dev/input/event*`.
-Device permission changes must also persist through the host's udev rules.
-
-## Configure
-
-Place ROMs outside the project:
-
-```text
-~/Documents/games/snes/<game>.sfc
-~/Documents/games/gba/<game>.gba
-```
-
-Copy `.env.example` to `.env` and set the ROM filenames, your host UID/GID,
-`INPUT_GID` from `getent group input`, and `INPUT_TOKEN_SECRET`. Generate a
-secret with `openssl rand -hex 32`. Quote ROM filenames that contain spaces.
-Only the ROM for a session you start needs to be set.
-
-```bash
 cp .env.example .env
 id -u
 id -g
 openssl rand -hex 32
 ```
 
-`ALLOWED_ORIGINS` defaults in the example to the development UI on localhost:8000.
-The private `.env`, ROMs, and existing game saves are not tracked in Git.
+Set `PUID`, `PGID`, `INPUT_GID` and `INPUT_TOKEN_SECRET` in `.env`. Use the
+numeric group with access to `/dev/uinput` for `INPUT_GID` and the generated
+random value for the secret. The private `.env`, ROMs and saves are not
+tracked in Git.
 
-## Build and run
+Set `GAMES_DIR` in `.env` to the shared ROM library root. Keep one
+subdirectory per console, for example:
 
-```bash
-# Create bind-mount directories as your user before Docker starts.
-mkdir -p saves/snes/states saves/gba/states
-docker compose build
-# Start one session first:
-docker compose up frontend mediamtx retroarch-snes
+```text
+$GAMES_DIR/
+├── snes/<game>.sfc
+└── gba/<game>.gba
 ```
 
-For GBA use `retroarch-gba`, or start both with `docker compose up` after checking
-the device-sharing limitation below. The build supports Linux AMD64 and ARM64.
-To build only the original emulator image, use:
+Session ROM paths are relative to `GAMES_DIR`. **Edit the sample `spec.rom` to
+match your file**. A session only needs its own console's ROM. `GAMES_DIR` is
+required; the scripts still accept `ROM_DIR` as a legacy alias. If an existing
+node attachment uses the old SNES-only root, follow the
+[migration instructions](operator/README.md#existing-snes-only-attachment)
+before changing it.
+
+### 2. Start Minikube and load images
+
+From the repository root:
 
 ```bash
-docker build -f runtimes/retroarch/Dockerfile --target retroarch-base -t retro-k8s-poc/retroarch:latest .
+minikube start -p minikube --driver=docker --keep-context
+
+docker build -t retro-k8s-poc/retroarch-input:latest -t retro-k8s-poc/retroarch-input:pilot \
+  --target retroarch-input -f runtimes/retroarch/Dockerfile .
+docker build -t retro-k8s-poc/frontend:latest -t retro-k8s-poc/frontend:pilot \
+  -f frontend/Dockerfile .
+docker pull bluenviron/mediamtx:1
+
+minikube -p minikube image load --daemon retro-k8s-poc/retroarch-input:pilot
+minikube -p minikube image load --daemon retro-k8s-poc/frontend:pilot
 ```
 
-Compose starts the browser UI and development token endpoint automatically.
-If you previously ran `python3 frontend/dev-server.py`, stop that process
-with Ctrl+C first so the frontend container can bind localhost:8000.
+The pilot uses locally loaded images with `imagePullPolicy: Never` for the
+operator's session containers. The operator deploy script builds and loads the
+operator image and loads the local MediaMTX image.
 
-Open [the controller UI](http://localhost:8000). Select SNES or GBA, click Unmute
-for audio, and keep the page focused while playing. The frontend container receives the same token secret as the session agent
-through Compose; no Python process is needed on your host.
+### 3. Deploy the operator and shared platform
 
-The agent endpoints bind to localhost:8765 (SNES) and localhost:8766 (GBA).
-The UI obtains a short-lived session token automatically. Media-only readers
-remain available at [SNES](http://localhost:8889/snes) and
-[GBA](http://localhost:8889/gba).
+```bash
+bash deploy/kubernetes/local/deploy-operator.sh
+bash deploy/kubernetes/local/deploy-platform.sh
+```
+
+The operator script creates or reuses the token Secret, attaches the host input
+and ROM paths if needed, and deploys the operator. The platform script deploys
+the frontend and shared MediaMTX, advertising the Minikube IP for WebRTC. See
+[operator deployment](operator/README.md#deploy-on-minikube) for options and
+attachment details.
+
+### 4. Create a session
+
+After updating the sample ROM path to match your library, apply its save claim
+and `RetroSession`:
+
+```bash
+# SNES
+kubectl --context minikube apply -f deploy/kubernetes/samples/snes/chrono-trigger-saves.yaml
+kubectl --context minikube apply -f deploy/kubernetes/samples/snes/retrosession-snes.yaml
+
+# Or GBA
+kubectl --context minikube apply -f deploy/kubernetes/samples/gba/gba-saves.yaml
+kubectl --context minikube apply -f deploy/kubernetes/samples/gba/retrosession-gba.yaml
+
+kubectl --context minikube -n retro-k8s get retrosessions,pods,pvc
+```
+
+The frontend discovers the sessions when they become ready. Give each running
+session its own save claim; the operator does not create or delete claims.
+Deleting a `RetroSession` removes its Deployment and input Service, but keeps
+its PVC. `Ready` means the operator's readiness checks pass; it is not an
+end-to-end guarantee that browser playback works.
+
+### 5. Open the browser
+
+In a terminal, keep the frontend port-forward running:
+
+```bash
+bash deploy/kubernetes/local/port-forward-frontend.sh
+```
+
+Open [http://127.0.0.1:18000](http://127.0.0.1:18000), select a ready session,
+and click **Unmute** for sound. WebRTC media uses Minikube's UDP NodePort
+`30189`; the frontend port-forward carries the web UI, input proxy and WebRTC
+signaling. The optional [user service](deploy/kubernetes/local/retro-k8s-browser.service)
+can keep the port-forward running.
 
 | Keyboard | Control |
 | --- | --- |
@@ -123,33 +172,45 @@ remain available at [SNES](http://localhost:8889/snes) and
 | Enter / Right Shift | Start / Select |
 | Q / W | L / R |
 
-Standard browser gamepads support D-pad, face/shoulder buttons, and both sticks.
-Nonstandard devices and devices named Retro-K8s are ignored to prevent incorrect
-mappings and virtual-controller feedback. The UI reports the selected/ignored
-device. Unplugging, focus loss, disconnect, and heartbeat timeout release input.
+Standard browser gamepads are also supported. Keep the page focused while
+playing. Unplugging, focus loss, disconnect or heartbeat timeout releases held
+input.
 
-## Rendering, audio, and saves
+### Stop or restart
 
-Xvfb provides an offscreen X server with Mesa software GL; no desktop is needed.
-SDL2's dummy audio backend and `audio_sync = true` pace the emulator while FFmpeg
-records core audio independently. RTMP uses H.264/AAC with ultrafast/zerolatency
-settings. Set `SHOW_FPS=true` to inspect the on-stream frame counter.
+Save in the game before stopping or restarting a session; unsaved progress may
+be lost. To reset a session's emulator by replacing its Pod:
 
-Battery saves persist in `./saves/snes` and `./saves/gba`; save states use their
-`states/` subdirectories. These survive `docker compose down`.
+```bash
+kubectl --context minikube -n retro-k8s rollout restart deployment/chrono-trigger
+kubectl --context minikube -n retro-k8s rollout status deployment/chrono-trigger
+```
+
+To stop Minikube, run `minikube stop -p minikube`. Existing PVCs are retained;
+stopping the cluster does not delete them. Stop the browser port-forward with
+Ctrl+C. Restarting or upgrading the operator can replace session Pods, so save
+first. See the [operator README](operator/README.md#existing-snes-only-attachment)
+if the host input/ROM attachment needs to be reattached.
 
 ## Diagnostics and tests
 
+The browser's **Session diagnostics** panel reports input acknowledgments,
+held buttons, browser-to-agent round-trip times and WebRTC statistics. Agent
+acceptance means the input reached the agent's controller state; it does not
+prove that RetroArch consumed it. WebRTC metrics do not measure the entire
+input-to-screen path.
+
+Inspect a Kubernetes session and its logs:
+
 ```bash
-docker compose logs -f retroarch-snes
-# Accepted controller events:
-# Set LOG_LEVEL=DEBUG in .env, then recreate the session.
-docker compose logs retroarch-snes | rg 'rx |Autoconf|joypad|audio'
+kubectl --context minikube -n retro-k8s describe retrosession chrono-trigger
+kubectl --context minikube -n retro-k8s logs deployment/chrono-trigger -c session
+kubectl --context minikube -n retro-k8s logs deployment/chrono-trigger -c audio-relay
+kubectl --context minikube -n retro-k8s logs deployment/mediamtx
 ```
 
-Expect the session's named Retro-K8s pad to be configured in port 1 and the
-synchronous audio driver to start. `MIN_HOLD_MS` defaults to 40 to preserve short
-button taps across RetroArch polling frames; adjust it for your latency needs.
+The [input probe](deploy/kubernetes/local/input-probe/README.md) tests uinput
+access without starting a game. For automated checks:
 
 ```bash
 python3 -m venv .venv
@@ -157,173 +218,51 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s input-agent/tests -t input-agent -v
 PYTHONPATH=frontend:input-agent .venv/bin/python -m unittest discover -s frontend/tests -t frontend -v
 node --test frontend/tests/*.mjs
+(cd operator && make test)
+bash operator/tests/media-recovery.sh
 ```
 
-Python tests cover protocol/state/auth and real loopback WebSocket connections
-without evdev or uinput. Browser tests cover feedback filtering, unplug cleanup,
-focus loss, and stopped connection attempts. Full gameplay needs the Linux
-container and browser; unit tests do not establish end-to-end latency or mapping.
+The media recovery test uses isolated Docker containers and a synthetic stream;
+it needs the local `bluenviron/mediamtx:1` and `retro-k8s-poc/frontend:pilot`
+images. [operator/verify-snes-session.sh](operator/verify-snes-session.sh) is a separate **live cluster
+test**: it deletes and recreates its SNES test session and Deployment while
+retaining its save PVC. Read the [verification steps](operator/README.md#verify)
+before running it.
 
-## Live diagnostics
+## Status and next steps
 
-The browser UI includes a **Session diagnostics** panel, enabled by default.
-Rebuild/recreate the emulator container after updating the agent, then reload the
-page (a hard refresh may be needed for cached JavaScript):
+Checks performed on Minikube in November 2026:
 
-```bash
-docker compose up --build frontend mediamtx retroarch-snes
-```
+- A privileged, non-root probe created and read a virtual controller. The
+  non-privileged probe could not open `/dev/uinput`.
+- SNES started from a read-only ROM, used its reserved pad and reloaded an
+  in-game save after Pod replacement. Operator checks covered resource repair
+  and save-PVC retention across session deletion and recreation.
+- GBA started with mGBA alongside SNES, used its own pad and save claim, and
+  delivered video and non-silent decoded audio to a browser. Keyboard and a
+  simulated gamepad were exercised. A GBA in-game save/reload and a physical
+  gamepad check remain to be confirmed.
+- An isolated GBA session resumed publishing H.264 and Opus after the shared
+  MediaMTX restarted, without restarting the emulator Pod or its containers.
+  Automatic browser reconnection after that interruption remains unverified.
 
-The panel shows:
+Next, complete the GBA save/reload and physical-controller checks, verify
+browser reconnection after a shared MediaMTX restart, and build authenticated
+session routing, per-player save ownership and tested controller isolation
+before supporting multiple untrusted players.
 
-- Agent-received input events with sequence numbers and accepted/invalid/rate-limited results.
-- The agent's held buttons, normalized Linux axis values, and minimum-hold pending releases.
-- Browser-to-agent round-trip time, p95 across the last 120 replies, and agent handling time.
-- Sent/replied/pending/unacknowledged counts, plus server acceptance and rejection counts.
-- Receiver FPS, video bitrate/resolution, received/decoded/dropped frames, video packet loss,
-  jitter, jitter buffer delay, frame decode time, freezes, and selected WebRTC connection RTT.
+## Pilot limitations
 
-**Export JSON** downloads a local snapshot, including up to 50 acknowledged input
-events. Tokens and connection URLs are not included. Uncheck **Collect diagnostics**
-to stop diagnostic acknowledgments and WebRTC polling while keeping gameplay input.
+- The emulator container is privileged and uses host input devices. Controller
+  naming and selection are not security isolation.
+- The token endpoint has no user authentication. Keep this pilot local; remote
+  access needs authentication, HTTPS/WSS, explicit origins and session routing.
+- `ReadWriteOnce` claims should be dedicated to individual sessions. ROMs are
+  read-only; save data persists in the PVC, not in the ROM library.
+- The session-local media server protects against a restart of the *shared*
+  MediaMTX; failure of the local media container can still interrupt the stream.
 
-Input RTT includes both network directions and scheduling; it is not one-way
-latency or input-to-screen latency. Agent acceptance means the event reached the
-controller state, not that RetroArch consumed it. Minimum-hold releases may still
-be pending when an acknowledgment is generated. State is refreshed on replies,
-including idle heartbeats every two seconds. Counts reset when input reconnects.
-Unacknowledged messages are not proof of lost inputs: a delayed reply, older
-agent, or disconnect can also explain them. Background tabs affect timers/RTT.
-
-WebRTC metrics use the [W3C statistics API](https://www.w3.org/TR/webrtc-stats/).
-Interval metrics are sampled once per second; the first sample establishes a
-baseline. Unsupported fields show `—`, rather than a misleading zero. Dropped
-receiver frames, player rendering drops, and lost RTP packets measure different
-things. These statistics cannot count frames lost inside RetroArch, its encoder,
-or the RTMP path before MediaMTX. True button-to-screen latency needs dedicated
-instrumentation or an external capture measurement.
-
-## Device sharing and deployment limits
-
-The POC mounts the host's entire `/dev/input` and `/run/udev`, and permits input
-device major 13 so newly created event nodes are accessible. RetroArch reserves
-player 1 for the session's named controller. This is controller selection, not
-kernel device isolation: sessions can still see other host input devices.
-Do not treat this setup as isolated multi-tenant Kubernetes workloads.
-
-The development token endpoint has no user authentication and must stay local.
-For remote deployment, add authenticated token issuance, HTTPS/WSS, explicit
-origins, and session routing. Tokens currently travel in the WebSocket query
-string, so avoid recording full URLs in proxy logs. Kubernetes device allocation
-and per-session isolation still need their own implementation.
-
-For LAN video, MediaMTX currently advertises `127.0.0.1`; configure the host LAN
-address in `webrtcAdditionalHosts`. Outside Kubernetes the development UI
-connects directly to local HTTP media on port 8889 and local WebSocket input
-ports; in Kubernetes it uses same-origin proxy routes. Neither mode is a
-production gateway.
-
-## Stop
-
-```bash
-docker compose down
-```
-
-Compose also stops the frontend. For frontend/token logs, run
-`docker compose logs -f frontend`.
-
-## Kubernetes roadmap
-
-### Current state
-
-During the November 2, 2026 check, Docker Compose was running the frontend,
-MediaMTX and a SNES session. Logs showed that RetroArch selected the session's
-virtual gamepad for player 1 and that browsers received H.264 video. Keyboard
-and gamepad input, session tokens, disconnect cleanup and browser diagnostics
-are implemented. All 20 Python tests and both Node test suites passed. GBA is
-configured but was offline during the check.
-
-Browser audio now carries Opus through the relay, but audible playback through
-the host speakers has not been confirmed. Saves persist in per-console host
-directories.
-
-The static Kustomize SNES pilot was also deployed to Minikube and passed its
-step 2 checks: the game started from a read-only ROM host mount, RetroArch
-selected the pilot pad for player 1, writes to the ROM mount failed, and a save
-marker survived Pod replacement.
-
-On November 3, 2026, the `RetroSession` operator was deployed to Minikube and
-passed its SNES checks: a `RetroSession` created one emulator Deployment and one
-input Service, reported `Ready` with frontend endpoints, repaired a deleted
-Deployment, garbage-collected the session resources, and retained and reused the
-save PVC across `RetroSession` deletion and recreation. The frontend now lists
-`RetroSession` resources with its service account and proxies input WebSocket
-and WHEP signaling through same-origin routes, so the browser only needs the
-frontend port-forward. GBA validation and per-player isolation remain in progress.
-Each session has a local media ingest container and a relay that publishes to the
-shared MediaMTX server.
-
-On November 3, 2026, the operator-aware frontend was verified in Minikube:
-`/api/config` listed `chrono-trigger` with `mode: proxy`, `/api/token` minted a
-session token, and the proxy carried a WebSocket heartbeat to the input agent
-and a WHEP request to MediaMTX. The browser UI renders discovered sessions and
-follows readiness changes.
-
-### Roadmap
-
-1. **Prove virtual controller access in Minikube.** Run a disposable probe Pod
-   using the existing session image and the emulator's UID, GID and supplementary
-   input group. Check `/dev/uinput`, `/dev/input` and udev metadata inside the
-   Docker-backed node and again inside the Pod. The probe passes when it creates
-   a uniquely named pad, reads a button press and release from that pad's new
-   event device, and confirms the device disappears on close. Record any
-   privileged access required for this trusted local pilot. **Verified on
-   Minikube on November 2, 2026:** the regular Pod could not open `/dev/uinput`;
-   the privileged Pod passed as the non-root session user with the live input
-   paths attached. Follow the [input probe instructions](deploy/kubernetes/local/input-probe/README.md)
-   to reproduce both results.
-
-2. **Deploy one SNES session with static manifests.** Use Kustomize to deploy
-   the frontend, MediaMTX and the combined RetroArch/input container. Load tagged
-   images into Minikube, mount one user-supplied ROM read-only, and give the
-   emulator a separate writable save PVC. Use a single-replica `Recreate`
-   Deployment, a Kubernetes Secret for token signing, and a unique pad name so
-   the pilot can run alongside Compose. This step passes when the game starts,
-   RetroArch selects the correct pad, and the save volume survives Pod replacement.
-   **Verified on Minikube on November 2, 2026:** `deploy/legacy/static-snes/deploy.sh` started
-   the game from a read-only ROM mount, logs reported
-   `Retro-K8s Pad snes-k8s configured in port 1`, and `deploy/legacy/static-snes/verify.sh`
-   confirmed the ROM mount rejects writes and a `/saves` marker survived Pod
-   replacement. Follow the [pilot instructions](deploy/legacy/static-snes/README.md).
-
-3. **Make the session playable from the local browser.** Make the frontend's
-   session list and endpoints configurable. Use separate loopback TCP ports for
-   the pilot UI, input and WebRTC signaling. Advertise the Minikube node IP and
-   set the UDP NodePort to match MediaMTX's ICE listening port. For audio, relay
-   the raw SNES stream through FFmpeg, copy H.264, convert AAC to Opus and
-   publish to a separate playback path. This step passes when unmuting produces
-   game sound, keyboard and gamepad presses visibly change the game,
-   disconnecting releases held input, and an in-game save reloads after Pod
-   replacement. In-game save and reload were confirmed on November 2, 2026.
-   [MediaMTX playback codecs](https://mediamtx.org/docs/read/webrtc)
-   · [WebRTC connectivity](https://mediamtx.org/docs/features/webrtc-specific-features)
-
-4. **Build the `RetroSession` operator from the verified deployment.** Introduce
-   a namespaced resource that selects a console, a ROM within its library and an
-   existing save claim. The Go controller creates one emulator Deployment and
-   input Service per session, supplies endpoint information for the frontend,
-   and reports readiness or a concrete failure reason. Verify that reconciliation
-   repairs deleted resources, avoids duplicate emulators and preserves saves when
-   a session is deleted and recreated. Validate GBA as the second core. Before
-   opening access to multiple players, add authenticated session routing,
-   per-player save ownership and tested isolation between virtual controllers.
-   **Verified for SNES on Minikube on November 3, 2026:**
-   `operator/deploy.sh` deployed the controller and `operator/verify.sh`
-   confirmed creation, `Ready` status and endpoints, Deployment repair,
-   garbage-collection of the Deployment/Service, and save-PVC retention and
-   reuse across `RetroSession` deletion and recreation. **Frontend integration
-   was verified on Minikube on November 3, 2026:** the frontend service account
-   listed the `chrono-trigger` session, `/api/config` returned `mode: proxy`, and
-   the proxy forwarded both a WebSocket heartbeat to the input agent and a WHEP
-   offer to MediaMTX. GBA validation remains pending. Follow the
-   [operator instructions](operator/README.md).
+To add another Libretro console, include its core in the RetroArch image and
+extend the operator's console API, core mapping and tests. A different emulator
+runtime also needs an operator workload implementation; adding a directory
+under `runtimes/` alone does not make it available.

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Attach the host's live input paths and one read-only ROM directory to the
-# Docker-backed Minikube node. The pilot Pod uses these node paths through
-# hostPath volumes. Run "detach" after deleting the session.
+# Docker-backed Minikube node. Set GAMES_DIR (or legacy ROM_DIR) to the shared
+# ROM library root. The pilot Pod uses these node paths through hostPath
+# volumes. Run "detach" after deleting the session.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
 profile=${MINIKUBE_PROFILE:-minikube}
 root=${NODE_INPUT_ROOT:-/run/retro-k8s-input}
-rom_dir=${ROM_DIR:-${GAMES_DIR:-$HOME/Documents/games}}
+rom_dir=${GAMES_DIR:-${ROM_DIR:-}}
 image=${HELPER_IMAGE:-retro-k8s-poc/retroarch-input:latest}
 state=$script_dir/.node-input-state
 legacy_state=$script_dir/../../../k8s/local/.node-input-state
@@ -24,7 +25,6 @@ usage() {
 [[ $action == attach || $action == detach ]] || { usage; exit 2; }
 [[ $root =~ ^(/[a-zA-Z0-9_.-]+)+$ ]] ||
   { echo "NODE_INPUT_ROOT must be an absolute node directory." >&2; exit 2; }
-[[ -d $rom_dir ]] || { echo "ROM directory not found: $rom_dir" >&2; exit 1; }
 
 node_exists() {
   local label
@@ -73,6 +73,9 @@ detach() {
 
 attach() {
   [[ -f $state ]] && { echo "Already attached; run $0 detach first." >&2; exit 1; }
+  [[ -n $rom_dir ]] ||
+    { echo "Set GAMES_DIR to the shared ROM library root." >&2; exit 2; }
+  [[ -d $rom_dir ]] || { echo "ROM directory not found: $rom_dir" >&2; exit 1; }
   node_exists || { echo "Minikube Docker node '$profile' not found." >&2; exit 1; }
   [[ -c /dev/uinput ]] || { echo "/dev/uinput is not a character device." >&2; exit 1; }
   [[ -d /dev/input ]] || { echo "/dev/input is missing." >&2; exit 1; }

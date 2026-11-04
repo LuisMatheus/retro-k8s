@@ -69,10 +69,10 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 RUN mkdir -p /saves/states /bios /tmp/.X11-unix \
     && chmod 1777 /tmp/.X11-unix
 
-COPY runtimes/retroarch/entrypoint.sh /usr/local/bin/retroarch-entrypoint
+COPY runtimes/retroarch/start-retroarch.sh /usr/local/bin/start-retroarch.sh
 COPY runtimes/retroarch/rtmp.cfg /etc/retroarch/rtmp.cfg
 
-RUN chmod +x /usr/local/bin/retroarch-entrypoint
+RUN chmod +x /usr/local/bin/start-retroarch.sh
 
 ENV CORE_PATH=/opt/retroarch/cores \
     SAVE_PATH=/saves \
@@ -82,7 +82,7 @@ ENV CORE_PATH=/opt/retroarch/cores \
     LIBGL_ALWAYS_SOFTWARE=1 \
     HOME=/tmp/retroarch
 
-ENTRYPOINT ["/usr/local/bin/retroarch-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/start-retroarch.sh"]
 
 # Session image: emulator and input agent share the same Linux input devices.
 FROM retroarch-base AS retroarch-input
@@ -95,8 +95,8 @@ COPY input-agent/requirements.txt /tmp/input-requirements.txt
 RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/input-requirements.txt
 WORKDIR /app
 COPY input-agent/agent/ /app/agent/
-COPY input-agent/input-wrapper.sh /input-wrapper.sh
-RUN chmod +x /input-wrapper.sh
+COPY runtimes/retroarch/start-session.sh /start-session.sh
+RUN chmod +x /start-session.sh
 ENV PATH="/opt/venv/bin:${PATH}" PYTHONUNBUFFERED=1 \
-    ORIGINAL_ENTRYPOINT=/usr/local/bin/retroarch-entrypoint INPUT_AGENT=1
-ENTRYPOINT ["/input-wrapper.sh"]
+    ORIGINAL_ENTRYPOINT=/usr/local/bin/start-retroarch.sh INPUT_AGENT=1
+ENTRYPOINT ["/start-session.sh"]

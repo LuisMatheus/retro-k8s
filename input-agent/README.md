@@ -2,12 +2,10 @@
 
 Browser → authenticated WebSocket → Python agent → uinput gamepad → RetroArch.
 The agent and emulator share a container. See [the project README](../README.md)
-for the integrated build, Linux host setup, browser UI, and Compose commands.
+for the integrated build, Linux host setup and browser UI.
 
-`docker compose up --build frontend mediamtx retroarch-snes` starts everything
-needed for local SNES play, including the UI/token service on localhost:8000.
-The input agent stays inside the emulator container; `frontend` serves the
-webpage and development tokens and has no host input-device access.
+The operator deploys the agent inside each emulator container. The `frontend`
+serves the webpage and development tokens and has no host input-device access.
 
 ## Tests
 
@@ -25,7 +23,7 @@ The Python tests do not need evdev; the Docker image installs it from Ubuntu.
 
 ## Frontend session discovery
 
-`frontend/dev-server.py` serves the browser and mints tokens. `SESSION_SOURCE` selects
+`frontend/server.py` serves the browser and mints tokens. `SESSION_SOURCE` selects
 where sessions come from:
 
 - `kubernetes` lists `retrosessions.retro.k8s` in the Pod namespace with the
@@ -35,7 +33,7 @@ where sessions come from:
   upstream from `RetroSession.status.endpoints`, never from browser input.
 - `static` uses `SESSIONS`, `SNES_INPUT_PORT`, `GBA_INPUT_PORT`,
   `INPUT_PORTS="name:port,..."` and `MEDIA_PORT`, and the browser connects
-  directly to those ports. This is the Docker Compose path.
+  directly to those ports. This is the static deployment path.
 - `auto` (default) chooses Kubernetes when service-account credentials exist,
   otherwise static.
 
@@ -75,7 +73,7 @@ Optional: `AGENT_HOST` (0.0.0.0), `AGENT_PORT` (8765), `HEARTBEAT_TIMEOUT` (5),
 `DEVICE_NAME`, `DEVICE_VENDOR`, `DEVICE_PRODUCT`.
 
 The wrapper also uses `ORIGINAL_ENTRYPOINT`, set by the image to
-`/usr/local/bin/retroarch-entrypoint`. It starts the agent first, waits for a
+`/usr/local/bin/start-retroarch.sh`. It starts the agent first, waits for a
 readable device, checks host udev metadata, and stops the sibling process when
 either the agent or RetroArch exits.
 
@@ -85,12 +83,12 @@ alternative to the shared RetroArch runtime build:
 ```bash
 docker build -f input-agent/Dockerfile \
   --build-arg BASE_IMAGE=retro-k8s-poc/retroarch:latest \
-  -t retro-k8s-poc/retroarch-input:latest input-agent
+  -t retro-k8s-poc/retroarch-input:latest .
 ```
 
-The base must include `runtimes/retroarch/entrypoint.sh` and its RTMP configuration.
-Compose uses the runtime's multi-stage Dockerfile, so a separate base build is not
-required for normal use.
+The base must include `runtimes/retroarch/start-retroarch.sh` and its RTMP configuration.
+The runtime's multi-stage Dockerfile builds the same image without a separate
+base build.
 
 ## Diagnostic replies
 

@@ -96,11 +96,11 @@ Prerequisites:
 - A Docker-backed Minikube profile with the pilot's input/ROM paths attached.
 - The session image (`retro-k8s-poc/retroarch-input:pilot`) loaded into the
   profile.
-- A `.env` with `PUID`, `PGID`, `INPUT_GID`, and (if the Secret does not exist
-  yet) `INPUT_TOKEN_SECRET`.
+- A `.env` with `GAMES_DIR`, `PUID`, `PGID`, `INPUT_GID`, and (if the Secret
+  does not exist yet) `INPUT_TOKEN_SECRET`.
 
 ```bash
-bash operator/deploy.sh
+bash deploy/kubernetes/local/deploy-operator.sh
 bash deploy/kubernetes/local/deploy-platform.sh
 ```
 
@@ -112,8 +112,9 @@ generated overlay; `deploy/kubernetes/operator/default` keeps checked-in pilot d
 The platform script installs the shared frontend and MediaMTX with the
 Minikube IP advertised for WebRTC. It reuses the session Secret.
 
-The default library root is `~/Documents/games`, with ROMs under `snes/`
-and `gba/`. Session ROM paths are relative to that root.
+`GAMES_DIR` must point to the shared ROM library root, with ROMs under `snes/`
+and `gba/`. Session ROM paths are relative to that root. The scripts still
+accept `ROM_DIR` as a legacy alias.
 
 Options: `--no-build`, `--no-load`, `--no-attach`.
 
@@ -128,7 +129,7 @@ kubectl -n retro-k8s get retrosession chrono-trigger -o yaml
 ## Verify
 
 ```bash
-bash operator/verify.sh
+bash operator/verify-snes-session.sh
 ```
 
 The script checks the full SNES path:
@@ -155,9 +156,10 @@ The save PVC `chrono-trigger-saves` is retained.
 
 ## GBA
 
-The API selects the `mgba` core for `console: gba`, but GBA has not yet been
-validated on the Minikube node. With the shared library attached, apply the
-GBA save claim and sample:
+The API selects the `mgba` core for `console: gba`. GBA has started on
+Minikube with video, decoded audio, keyboard and simulated gamepad input; an
+in-game save/reload and physical gamepad check remain to be confirmed. With
+the shared library attached, apply the GBA save claim and sample:
 
 ```bash
 kubectl apply -f deploy/kubernetes/samples/gba/gba-saves.yaml
@@ -169,12 +171,14 @@ the filename to the ROM in the library.
 
 ### Existing SNES-only attachment
 
-Older deployments attached `~/Documents/games/snes` as the library root and
-used bare filenames in existing `RetroSession` objects. The attachment script
+Older deployments attached the `snes/` directory itself as the library root
+and used bare filenames in existing `RetroSession` objects. The attachment script
 still recognizes the old state file. Before switching to the shared library,
 save progress and stop all sessions using the existing attachment. Detach it
 with `bash deploy/kubernetes/local/attach-node-input.sh detach`, then attach the shared root
-with `bash deploy/kubernetes/local/attach-node-input.sh attach`. Update existing SNES
+with `GAMES_DIR="/path/to/roms" bash deploy/kubernetes/local/attach-node-input.sh attach`.
+The attachment helper reads `GAMES_DIR` from its environment; setting it only in
+`.env` does not export it to a directly invoked helper. Update existing SNES
 resources to prefix their ROM path with `snes/` before starting them again.
 Save PVCs remain separate and should be retained during this migration.
 
