@@ -33,26 +33,28 @@ restarting the running game.
 ## Project layout
 
 ```text
-operator/                    RetroSession API, controller and tests
-frontend/                    Browser UI, discovery and proxy server
-input-agent/                 WebSocket input and virtual gamepad
-runtimes/retroarch/          RetroArch image, cores and startup scripts
-deploy/
-  kubernetes/
-    operator/                Operator CRD, RBAC and Deployment
-    platform/                Shared frontend and MediaMTX manifests
-    samples/                 SNES and GBA session and save claim examples
-    local/                   Minikube helpers and virtual-controller probe
-  legacy/static-snes/        Original static SNES pilot
+bootstrap/minikube/       Local setup scripts and shared platform overlay
+services/
+  frontend/              Browser UI, proxy, and its Kubernetes manifests
+  input-agent/           Gamepad input code included in the session image
+  mediamtx/k8s/          Shared streaming server and its manifests
+  operator/              RetroSession controller, manifests, and samples
+  profile-api/           Phoenix API, SQLite schema, and manifests
+  retroarch/             Emulator image and startup scripts
+profiles/                Local SQLite data (not tracked by Git)
+saves/                   Local game saves (not tracked by Git)
 ```
 
-See the [operator README](operator/README.md) for the API, reconciliation,
-configuration and verification details, and the [frontend README](frontend/README.md)
+The operator generates a session Deployment that combines RetroArch and the
+input agent; they do not have separate static Deployment manifests.
+
+See the [operator README](services/operator/README.md) for the API, reconciliation,
+configuration and verification details, and the [frontend README](services/frontend/README.md)
 for the browser components.
 
-The session image starts `runtimes/retroarch/start-session.sh`, which starts the
+The session image starts `services/retroarch/start-session.sh`, which starts the
 input agent and then `start-retroarch.sh`. For local cluster setup, run
-`deploy/kubernetes/local/deploy-operator.sh` and `deploy-platform.sh`; use
+`bootstrap/minikube/deploy-operator.sh` and `deploy-platform.sh`; use
 `port-forward-frontend.sh` to connect a browser.
 
 ## Run on Minikube
@@ -118,7 +120,7 @@ Session ROM paths are relative to `GAMES_DIR`. **Edit the sample `spec.rom` to
 match your file**. A session only needs its own console's ROM. `GAMES_DIR` is
 required; the scripts still accept `ROM_DIR` as a legacy alias. If an existing
 node attachment uses the old SNES-only root, follow the
-[migration instructions](operator/README.md#existing-snes-only-attachment)
+[migration instructions](services/operator/README.md#existing-snes-only-attachment)
 before changing it.
 
 ### 2. Start Minikube and load images
@@ -126,12 +128,12 @@ before changing it.
 From the repository root:
 
 ```bash
-minikube start -p minikube --driver=docker --keep-context
+bash bootstrap/minikube/start.sh
 
 docker build -t retro-k8s-poc/retroarch-input:latest -t retro-k8s-poc/retroarch-input:pilot \
-  --target retroarch-input -f runtimes/retroarch/Dockerfile .
+  --target retroarch-input -f services/retroarch/Dockerfile .
 docker build -t retro-k8s-poc/frontend:latest -t retro-k8s-poc/frontend:pilot \
-  -f frontend/Dockerfile .
+  -f services/frontend/Dockerfile .
 docker pull bluenviron/mediamtx:1
 
 minikube -p minikube image load --daemon retro-k8s-poc/retroarch-input:pilot
@@ -145,14 +147,14 @@ operator image and loads the local MediaMTX image.
 ### 3. Deploy the operator and shared platform
 
 ```bash
-bash deploy/kubernetes/local/deploy-operator.sh
-bash deploy/kubernetes/local/deploy-platform.sh
+bash bootstrap/minikube/deploy-operator.sh
+bash bootstrap/minikube/deploy-platform.sh
 ```
 
 The operator script creates or reuses the token Secret, attaches the host input
 and ROM paths if needed, and deploys the operator. The platform script deploys
 the frontend and shared MediaMTX, advertising the Minikube IP for WebRTC. See
-[operator deployment](operator/README.md#deploy-on-minikube) for options and
+[operator deployment](services/operator/README.md#deploy-on-minikube) for options and
 attachment details.
 
 ### 4. Create a session
@@ -162,12 +164,12 @@ and `RetroSession`:
 
 ```bash
 # SNES
-kubectl --context minikube apply -f deploy/kubernetes/samples/snes/chrono-trigger-saves.yaml
-kubectl --context minikube apply -f deploy/kubernetes/samples/snes/retrosession-snes.yaml
+kubectl --context minikube apply -f services/operator/samples/snes/chrono-trigger-saves.yaml
+kubectl --context minikube apply -f services/operator/samples/snes/retrosession-snes.yaml
 
 # Or GBA
-kubectl --context minikube apply -f deploy/kubernetes/samples/gba/gba-saves.yaml
-kubectl --context minikube apply -f deploy/kubernetes/samples/gba/retrosession-gba.yaml
+kubectl --context minikube apply -f services/operator/samples/gba/gba-saves.yaml
+kubectl --context minikube apply -f services/operator/samples/gba/retrosession-gba.yaml
 
 kubectl --context minikube -n retro-k8s get retrosessions,pods,pvc
 ```
@@ -178,18 +180,25 @@ Deleting a `RetroSession` removes its Deployment and input Service, but keeps
 its PVC. `Ready` means the operator's readiness checks pass; it is not an
 end-to-end guarantee that browser playback works.
 
+### Optional: deploy the profile API
+
+The profile API is an independent, experimental service; the frontend does not
+use it yet. After starting Minikube, use its [setup instructions](services/profile-api/README.md)
+to build the image, create its Secret, mount `profiles/`, and apply its local
+overlay. This can be done after the namespace is created in step 3.
+
 ### 5. Open the browser
 
 In a terminal, keep the frontend port-forward running:
 
 ```bash
-bash deploy/kubernetes/local/port-forward-frontend.sh
+bash bootstrap/minikube/port-forward-frontend.sh
 ```
 
 Open [http://127.0.0.1:18000](http://127.0.0.1:18000), select a ready session,
 and click **Unmute** for sound. WebRTC media uses Minikube's UDP NodePort
 `30189`; the frontend port-forward carries the web UI, input proxy and WebRTC
-signaling. The optional [user service](deploy/kubernetes/local/retro-k8s-browser.service)
+signaling. The optional [user service](bootstrap/minikube/retro-k8s-browser.service)
 can keep the port-forward running.
 
 | Keyboard | Control |
@@ -225,9 +234,9 @@ or reapply session manifests unless they have changed or are missing. Start
 Minikube, check session readiness and run the browser port-forward:
 
 ```bash
-minikube start -p minikube --driver=docker --keep-context
+bash bootstrap/minikube/start.sh
 kubectl --context minikube -n retro-k8s get retrosessions,pods,pvc
-bash deploy/kubernetes/local/port-forward-frontend.sh
+bash bootstrap/minikube/port-forward-frontend.sh
 ```
 
 **Known restart issue:** the host input and ROM mounts may disappear when
@@ -259,15 +268,14 @@ library path used in `.env`; a directly invoked attachment helper reads
 `GAMES_DIR` from its **environment**, not from `.env`:
 
 ```bash
-bash deploy/kubernetes/local/attach-node-input.sh detach
-GAMES_DIR="/absolute/path/to/roms" bash deploy/kubernetes/local/attach-node-input.sh attach
+bash bootstrap/minikube/attach-node-input.sh detach
+GAMES_DIR="/absolute/path/to/roms" bash bootstrap/minikube/attach-node-input.sh attach
 kubectl --context minikube -n retro-k8s scale deployment/retrosession-operator --replicas=1
 ```
 
 The operator reconciles the sessions back to one replica. Check their readiness
 before reconnecting. The path check above only
-confirms the node paths exist; the [input probe](deploy/kubernetes/local/input-probe/README.md)
-can test controller access. See the [operator README](operator/README.md#existing-snes-only-attachment)
+confirms the node paths exist. See the [operator README](services/operator/README.md#existing-snes-only-attachment)
 when migrating an older SNES-only attachment.
 
 ## Diagnostics and tests
@@ -287,24 +295,23 @@ kubectl --context minikube -n retro-k8s logs deployment/chrono-trigger -c audio-
 kubectl --context minikube -n retro-k8s logs deployment/mediamtx
 ```
 
-The [input probe](deploy/kubernetes/local/input-probe/README.md) tests uinput
-access without starting a game. For automated checks:
+For automated checks:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r input-agent/requirements.txt
-.venv/bin/python -m unittest discover -s input-agent/tests -t input-agent -v
-PYTHONPATH=frontend:input-agent .venv/bin/python -m unittest discover -s frontend/tests -t frontend -v
-node --test frontend/tests/*.mjs
-(cd operator && make test)
-bash operator/tests/media-recovery.sh
+.venv/bin/pip install -r services/input-agent/requirements.txt
+.venv/bin/python -m unittest discover -s services/input-agent/tests -t services/input-agent -v
+PYTHONPATH=services/frontend:services/input-agent .venv/bin/python -m unittest discover -s services/frontend/tests -t services/frontend -v
+node --test services/frontend/tests/*.mjs
+(cd services/operator && make test)
+bash services/operator/tests/media-recovery.sh
 ```
 
 The media recovery test uses isolated Docker containers and a synthetic stream;
 it needs the local `bluenviron/mediamtx:1` and `retro-k8s-poc/frontend:pilot`
-images. [operator/verify-snes-session.sh](operator/verify-snes-session.sh) is a separate **live cluster
+images. [services/operator/verify-snes-session.sh](services/operator/verify-snes-session.sh) is a separate **live cluster
 test**: it deletes and recreates its SNES test session and Deployment while
-retaining its save PVC. Read the [verification steps](operator/README.md#verify)
+retaining its save PVC. Read the [verification steps](services/operator/README.md#verify)
 before running it.
 
 ## Status and next steps
@@ -343,4 +350,4 @@ before supporting multiple untrusted players.
 To add another Libretro console, include its core in the RetroArch image and
 extend the operator's console API, core mapping and tests. A different emulator
 runtime also needs an operator workload implementation; adding a directory
-under `runtimes/` alone does not make it available.
+under `services/retroarch/` alone does not make it available.

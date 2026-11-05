@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: profile-api-data
+spec:
+  storageClassName: ""
+  volumeName: profile-api-local

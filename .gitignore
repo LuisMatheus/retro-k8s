@@ -13,10 +13,14 @@ __pycache__/
 k8s/snes/generated/
 k8s/snes/.node-input-state
 k8s/local/.node-input-state
-deploy/kubernetes/local/.node-input-state
+bootstrap/minikube/.node-input-state
 deploy/legacy/static-snes/generated/
-deploy/kubernetes/.platform-*/
+bootstrap/minikube/.platform-*/
 
 # Operator build output and transient deploy overlays
-operator/bin/
-deploy/kubernetes/operator/.deploy-*/
+services/operator/bin/
+services/operator/k8s/.deploy-*/
+
+# Local profile database, including SQLite journal files
+/profiles/*
+!/profiles/.gitkeep

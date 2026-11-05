@@ -1,0 +1,13 @@
+[Unit]
+Description=Retro-K8s local browser access
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/retro-k8s
+ExecStart=/bin/bash %h/Documents/retro-k8s/bootstrap/minikube/port-forward-frontend.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
