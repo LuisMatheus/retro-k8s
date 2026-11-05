@@ -32,7 +32,6 @@ spec:
             - --namespace=retro-k8s
             - --default-image=retro-k8s-poc/retroarch-input:pilot
             - --image-pull-policy=Never
-            - --rom-library-path=/run/retro-k8s-input/roms
             - --rom-mount-path=/roms
             - --node-input-root=/run/retro-k8s-input
             - --token-secret=retro-session-secret

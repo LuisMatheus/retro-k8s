@@ -24,3 +24,12 @@ services/operator/k8s/.deploy-*/
 # Local profile database, including SQLite journal files
 /profiles/*
 !/profiles/.gitkeep
+
+# Local ROM library
+/games/*
+!/games/snes/
+!/games/gba/
+/games/snes/*
+!/games/snes/.gitkeep
+/games/gba/*
+!/games/gba/.gitkeep

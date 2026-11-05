@@ -175,7 +175,7 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 		"RTMP_HOST":   "127.0.0.1",
 		"RTMP_PORT":   "1935",
 		"CORE":        "snes9x",
-		"ROM_PATH":    "/roms/Chrono Trigger (USA).sfc",
+		"ROM_PATH":    "/roms/snes/Chrono Trigger (USA).sfc",
 		"SESSION_ID":  "chrono-trigger",
 		"DEVICE_NAME": "Retro-K8s Pad chrono-trigger",
 		"SAVE_PATH":   "/saves",
@@ -194,8 +194,9 @@ func TestReconcileCreatesDeploymentAndService(t *testing.T) {
 	if got := deployment.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName; got != "chrono-trigger-saves" {
 		t.Fatalf("save claim = %q", got)
 	}
-	if got := deployment.Spec.Template.Spec.Volumes[1].HostPath.Path; got != "/run/retro-k8s-input/roms" {
-		t.Fatalf("ROM library hostPath = %q", got)
+	romVolume := deployment.Spec.Template.Spec.Volumes[1].PersistentVolumeClaim
+	if romVolume == nil || romVolume.ClaimName != "retro-k8s-snes-games" || !romVolume.ReadOnly {
+		t.Fatalf("SNES game volume = %#v", romVolume)
 	}
 
 	var service corev1.Service
@@ -768,6 +769,10 @@ func TestGBAUsesMgbaCore(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &deployment); err != nil {
 		t.Fatal(err)
 	}
+	romVolume := deployment.Spec.Template.Spec.Volumes[1].PersistentVolumeClaim
+	if romVolume == nil || romVolume.ClaimName != "retro-k8s-gba-games" || !romVolume.ReadOnly {
+		t.Fatalf("GBA game volume = %#v", romVolume)
+	}
 	if got := envMap(deployment.Spec.Template.Spec.Containers[0].Env)["CORE"]; got != "mgba" {
 		t.Fatalf("GBA core = %q, want mgba", got)
 	}
@@ -814,4 +819,37 @@ func envByName(env []corev1.EnvVar, name string) *corev1.EnvVar {
 		}
 	}
 	return nil
+}
+
+func TestConsoleGamesMount(t *testing.T) {
+	r := testReconciler(newTestClient(t), testScheme(t))
+	for _, tc := range []struct {
+		console                 v1alpha1.Console
+		rom, claim, mount, want string
+	}{
+		{v1alpha1.ConsoleSNES, "snes/Chrono.sfc", "retro-k8s-snes-games", "/roms/snes", "/roms/snes/Chrono.sfc"},
+		{v1alpha1.ConsoleGBA, "gba/Pokemon.gba", "retro-k8s-gba-games", "/roms/gba", "/roms/gba/Pokemon.gba"},
+	} {
+		s := newSession()
+		s.Spec.Console = tc.console
+		s.Spec.ROM = tc.rom
+		d := r.desiredDeployment(s)
+		v := d.Spec.Template.Spec.Volumes[1].PersistentVolumeClaim
+		if v == nil || v.ClaimName != tc.claim || !v.ReadOnly {
+			t.Fatalf("%s claim: %#v", tc.console, v)
+		}
+		container := d.Spec.Template.Spec.Containers[0]
+		if got := envMap(container.Env)["ROM_PATH"]; got != tc.want {
+			t.Fatalf("%s ROM path: %s", tc.console, got)
+		}
+		found := false
+		for _, m := range container.VolumeMounts {
+			if m.Name == "roms" && m.MountPath == tc.mount && m.ReadOnly {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s missing read-only console mount", tc.console)
+		}
+	}
 }

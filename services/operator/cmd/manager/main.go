@@ -47,7 +47,7 @@ func main() {
 	flag.StringVar(&config.LocalMediaImage, "local-media-image", "bluenviron/mediamtx:1", "MediaMTX image for per-session RTMP ingest.")
 	flag.StringVar(&config.RelayImage, "relay-image", "retro-k8s-poc/frontend:pilot", "FFmpeg image for the per-session audio relay.")
 	flag.StringVar(&imagePullPolicy, "image-pull-policy", "Never", "Image pull policy for session Pods.")
-	flag.StringVar(&config.ROMLibraryPath, "rom-library-path", "/run/retro-k8s-input/roms", "Node hostPath containing the read-only ROM library.")
+	flag.StringVar(&config.ROMLibraryPath, "rom-library-path", "/run/retro-k8s-input/roms", "Deprecated and ignored; ROMs are mounted from console-specific PVCs.")
 	flag.StringVar(&config.ROMMountPath, "rom-mount-path", "/roms", "Mount path for the ROM library in session Pods.")
 	flag.StringVar(&config.NodeInputRoot, "node-input-root", "/run/retro-k8s-input", "Node hostPath containing the attached input devices and udev data.")
 	flag.StringVar(&config.TokenSecretName, "token-secret", "retro-session-secret", "Secret containing INPUT_TOKEN_SECRET.")

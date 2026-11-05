@@ -53,18 +53,23 @@ kubectl --context minikube -n retro-k8s port-forward service/profile-api 14000:4
 
 The profile database is stored in `profile-api-data`, separate from game save
 claims. Deleting the Deployment does not remove that PVC. A PVC is not a backup.
-The frontend has not yet been connected to this service. Data from earlier prototypes is not automatically migrated.
+The frontend can list, create, rename, and select profiles through its same-origin
+proxy. Selection is remembered in the browser; it does not authenticate a user
+or associate sessions or save claims with that profile. Data from earlier
+prototypes is not automatically migrated.
 
 ## Store the Minikube database in the repository profiles folder
 
-The local overlay binds the PVC to a retained hostPath PV. First start Minikube,
-then keep this command running in a terminal for as long as the API is running:
+The local overlay binds the PVC to a retained hostPath PV. Start Minikube,
+then run this command to attach a native bind mount (SQLite cannot reliably use
+the default Minikube 9p mount):
 
 ```bash
-minikube -p minikube mount "$(pwd)/profiles:/mnt/retro-k8s-profiles"
+bash bootstrap/minikube/mount-profiles.sh
 ```
 
-Run it from the repository root. In a second terminal, build/load the image and
+The script resolves the repository root automatically and leaves a helper
+container running. Then build/load the image and
 create the Secret as above, then apply the local overlay instead of the base:
 
 ```bash
@@ -74,8 +79,9 @@ kubectl --context minikube -n retro-k8s rollout status deployment/profile-api
 
 The SQLite database and its journal files are now stored under `profiles/` on
 the host and ignored by Git. The directory must be writable by container UID
-1000. Restart the mount after a Minikube or mount-process restart; do not start
-the API until the mount is active. This node-local setup is for Minikube, not
+1000. After a Minikube restart, detach any stale helper with
+`bash bootstrap/minikube/mount-profiles.sh detach`, then attach it again. Stop
+the API before detaching and do not start it until the mount is active. This node-local setup is for Minikube, not
 AKS or EKS. Back up the database separately.
 
 If `profile-api-data` already exists and is bound to another volume, this

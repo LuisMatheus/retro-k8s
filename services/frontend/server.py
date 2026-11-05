@@ -20,8 +20,9 @@ from http.server import ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "..", "input-agent"))
+sys.path.insert(0, os.path.join(ROOT, "..", "runtimes", "retroarch", "input-agent"))
 from frontend import (  # noqa: E402
+    _port_value,
     KubeSessionSource,
     SessionRegistry,
     make_handler,
@@ -32,7 +33,7 @@ from frontend import (  # noqa: E402
 def load_secret() -> str:
     if os.environ.get("INPUT_TOKEN_SECRET"):
         return os.environ["INPUT_TOKEN_SECRET"]
-    for path in (os.path.join(os.getcwd(), ".env"), os.path.join(ROOT, "..", ".env")):
+    for path in (os.path.join(os.getcwd(), ".env"), os.path.join(ROOT, "..", "..", ".env")):
         if os.path.exists(path):
             for line in open(path):
                 if line.startswith("INPUT_TOKEN_SECRET="):
@@ -55,6 +56,8 @@ def session_source() -> KubeSessionSource | None:
 SECRET = load_secret()
 HOST = os.environ.get("DEV_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DEV_PORT", "8000"))
+PROFILE_API_HOST = os.environ.get("PROFILE_API_HOST", "")
+PROFILE_API_PORT = _port_value(os.environ.get("PROFILE_API_PORT", "4000"), 4000)
 MEDIA_HOST = os.environ.get("MEDIA_HOST", "mediamtx")
 MEDIA_WHEP_PORT = int(os.environ.get("MEDIA_WHEP_PORT", "8889"))
 
@@ -69,5 +72,5 @@ if __name__ == "__main__":
     mode = "kubernetes proxy" if SOURCE is not None else "static direct"
     print(f"Open http://localhost:{PORT}  (binding {HOST}, sessions: {mode})")
     ThreadingHTTPServer(
-        (HOST, PORT), make_handler(REGISTRY, SECRET, MEDIA_HOST, MEDIA_WHEP_PORT)
+        (HOST, PORT), make_handler(REGISTRY, SECRET, MEDIA_HOST, MEDIA_WHEP_PORT, PROFILE_API_HOST, PROFILE_API_PORT)
     ).serve_forever()

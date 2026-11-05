@@ -86,3 +86,16 @@ test('diagnostics disabled preserves legacy wire format', () => {
   assert.equal(c.messages[0].seq, undefined);
   assert.equal(c.pending.size, 0);
 });
+
+test('typing in a profile field does not send game input or trap held keys', () => {
+  const c = client();
+  let prevented = false;
+  const event = {code: 'KeyX', target: {tagName: 'INPUT'}, preventDefault() { prevented = true; }};
+  c.key(event, true);
+  assert.equal(c.messages.length, 0);
+  assert.equal(prevented, false);
+  key(c, 'KeyX', true);
+  c.key(event, false);
+  assert.deepEqual(c.messages.map(m => m.pressed), [true, false]);
+  assert.equal(prevented, false);
+});

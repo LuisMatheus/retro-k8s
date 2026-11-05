@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: retro-k8s-local-gba-saves
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: retro-k8s
+    name: gba-saves
+  hostPath:
+    path: /mnt/retro-k8s-saves/gba
+    type: Directory
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gba-saves
+  namespace: retro-k8s
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  volumeName: retro-k8s-local-gba-saves
+  resources:
+    requests:
+      storage: 1Gi

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import select
 import socket
 import ssl
@@ -431,7 +432,8 @@ def proxy_whep(
 
 
 def make_handler(
-    registry: SessionRegistry, secret: str, media_host: str, media_whep_port: int
+    registry: SessionRegistry, secret: str, media_host: str, media_whep_port: int,
+    profile_host: str = "", profile_port: int = 4000,
 ):
     """Create the HTTP handler with discovery and proxy dependencies bound."""
 
@@ -443,6 +445,9 @@ def make_handler(
 
         def do_GET(self):
             parsed = urlparse(self.path)
+            if parsed.path == "/api/profiles":
+                self._profiles("GET", parsed.path)
+                return
             if parsed.path == "/api/config":
                 try:
                     config = registry.config()
@@ -469,6 +474,9 @@ def make_handler(
 
         def do_POST(self):
             parsed = urlparse(self.path)
+            if parsed.path == "/api/profiles":
+                self._profiles("POST", parsed.path)
+                return
             parts = parsed.path.strip("/").split("/")
             if (
                 len(parts) == 4
@@ -478,6 +486,42 @@ def make_handler(
                 self._whep(parts[2])
                 return
             self._send_text(404, "not found")
+
+        def do_PATCH(self):
+            path = urlparse(self.path).path
+            if re.fullmatch(r"/api/profiles/[0-9a-fA-F-]{36}", path):
+                self._profiles("PATCH", path)
+            else:
+                self._send_json(404, {"error": "not found"})
+
+        def _profiles(self, method: str, path: str) -> None:
+            if not profile_host:
+                self._send_json(503, {"error": "profile service is not configured"})
+                return
+            body = None
+            if method != "GET":
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    self._send_json(400, {"error": "invalid Content-Length"})
+                    return
+                if length < 0 or length > 4096:
+                    self._send_json(413, {"error": "profile request too large"})
+                    return
+                body = self.rfile.read(length)
+            connection = HTTPConnection(profile_host, profile_port, timeout=5)
+            try:
+                connection.request(method, path, body=body, headers={"Content-Type": "application/json", "Accept": "application/json"})
+                response = connection.getresponse()
+                data = response.read(1024 * 1024 + 1)
+                if len(data) > 1024 * 1024:
+                    self._send_json(502, {"error": "profile response too large"})
+                    return
+                self._send(response.status, response.getheader("Content-Type") or "application/json", data)
+            except (OSError, HTTPException):
+                self._send_json(502, {"error": "profile service unavailable"})
+            finally:
+                connection.close()
 
         def _token(self, query: str) -> None:
             name = parse_qs(query).get("session", [""])[0]

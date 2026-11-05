@@ -51,7 +51,13 @@ running_pod() {
 
 "${kube[@]}" rollout status deployment/retrosession-operator --timeout=120s >/dev/null
 
-"${kube[@]}" apply -f "$repo_root/services/operator/samples/snes/chrono-trigger-saves.yaml" >/dev/null
+# Apply local game storage and create the save claim only when it does not exist.
+# Existing save claims may belong to another storage provider and must not be changed.
+if ! "${kube[@]}" get pvc "$claim" >/dev/null 2>&1; then
+  "${kube[@]}" apply -k "$repo_root/bootstrap/minikube/storage/snes" >/dev/null
+elif ! "${kube[@]}" get pvc retro-k8s-snes-games >/dev/null 2>&1; then
+  "${kube[@]}" apply -f "$repo_root/bootstrap/minikube/storage/snes/games.yaml" >/dev/null
+fi
 
 # Start from a clean session but keep the save claim: this also makes a re-run
 # prove that a previous run's saves are reused.

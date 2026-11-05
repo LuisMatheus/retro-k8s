@@ -5,7 +5,8 @@ controller-runtime operator that turns each session into one emulator
 Deployment and one input Service.
 
 The operator manages the emulator lifecycle only. It does **not** create,
-own or delete the save PVC. The claim is mounted at `/saves`, and its contents
+own or delete the save PVC. Game ROMs use a per-console read-only PVC (`retro-k8s-snes-games` or
+`retro-k8s-gba-games`). The save claim is mounted at `/saves`, and its contents
 survive session deletion so a recreated session can reuse them.
 
 ## API
@@ -32,7 +33,7 @@ spec:
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `console` | yes | `snes` (snes9x) or `gba` (mgba). |
-| `rom` | yes | Path relative to the operator's ROM library. No absolute paths, `.` or `..`. |
+| `rom` | yes | Path within the selected console library, optionally prefixed by the console name. No absolute paths, `.` or `..`. |
 | `saveClaimName` | yes | Existing PVC in the same namespace, mounted at `/saves`. |
 | `image` | no | Session image override. Defaults to `retro-k8s-poc/retroarch-input:pilot`. |
 | `padName` | no | Virtual pad name. Defaults to `Retro-K8s Pad <session name>`. |
@@ -124,7 +125,7 @@ Prerequisites:
 - A Docker-backed Minikube profile with the pilot's input/ROM paths attached.
 - The session image (`retro-k8s-poc/retroarch-input:pilot`) loaded into the
   profile.
-- A `.env` with `GAMES_DIR`, `PUID`, `PGID`, `INPUT_GID`, and (if the Secret
+- A `.env` with `PUID`, `PGID`, `INPUT_GID`, and (if the Secret
   does not exist yet) `INPUT_TOKEN_SECRET`.
 
 ```bash
@@ -140,7 +141,7 @@ generated overlay; `services/operator/k8s/default` keeps checked-in pilot defaul
 The platform script installs the shared frontend and MediaMTX with the
 Minikube IP advertised for WebRTC. It reuses the session Secret.
 
-`GAMES_DIR` must point to the shared ROM library root, with ROMs under `snes/`
+`GAMES_DIR` defaults to the repository `games/` folder and can be set to another library root, with ROMs under `snes/`
 and `gba/`. Session ROM paths are relative to that root. The scripts still
 accept `ROM_DIR` as a legacy alias.
 
@@ -149,7 +150,10 @@ Options: `--no-build`, `--no-load`, `--no-attach`.
 Apply the sample session:
 
 ```bash
-kubectl apply -f services/operator/samples/snes/chrono-trigger-saves.yaml
+# First keep this running in a separate terminal:
+# bash bootstrap/minikube/mount-saves.sh
+# bash bootstrap/minikube/mount-games.sh
+kubectl apply -k bootstrap/minikube/storage/snes
 kubectl apply -f services/operator/samples/snes/retrosession-snes.yaml
 kubectl -n retro-k8s get retrosession chrono-trigger -o yaml
 ```
@@ -190,7 +194,7 @@ in-game save/reload and physical gamepad check remain to be confirmed. With
 the shared library attached, apply the GBA save claim and sample:
 
 ```bash
-kubectl apply -f services/operator/samples/gba/gba-saves.yaml
+kubectl apply -k bootstrap/minikube/storage/gba
 kubectl apply -f services/operator/samples/gba/retrosession-gba.yaml
 ```
 

@@ -333,3 +333,62 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ProfileProxyTests(unittest.TestCase):
+    def setUp(self):
+        self.requests = []
+        seen = self.requests
+
+        class Upstream(BaseHTTPRequestHandler):
+            def respond(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                seen.append((self.command, self.path, body))
+                payload = b'{"profiles":[]}' if self.command == "GET" else body
+                self.send_response(200 if self.command != "POST" else 201)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            do_GET = do_POST = do_PATCH = respond
+            def log_message(self, *args):
+                pass
+
+        self.upstream, upstream_port = start_server(Upstream)
+        registry = SessionRegistry(None, [], {}, 8889)
+        self.frontend, self.port = start_server(
+            make_handler(registry, "secret", "127.0.0.1", 1, "127.0.0.1", upstream_port)
+        )
+
+    def tearDown(self):
+        stop_server(self.frontend)
+        stop_server(self.upstream)
+
+    def test_profile_methods_and_invalid_paths(self):
+        base = f"http://127.0.0.1:{self.port}"
+        profile_id = "8dc5e364-d145-46de-95ce-8fae4f6763cb"
+        for method, path, data in (
+            ("GET", "/api/profiles", None),
+            ("POST", "/api/profiles", b'{"display_name":"Alice"}'),
+            ("PATCH", f"/api/profiles/{profile_id}", b'{"display_name":"A"}'),
+        ):
+            req = urllib.request.Request(base + path, data=data, method=method)
+            with urllib.request.urlopen(req) as response:
+                self.assertEqual(response.status, 201 if method == "POST" else 200)
+        self.assertEqual([item[:2] for item in self.requests], [
+            ("GET", "/api/profiles"), ("POST", "/api/profiles"),
+            ("PATCH", f"/api/profiles/{profile_id}"),
+        ])
+        request = urllib.request.Request(base + "/api/profiles/invalid", data=b"{}", method="PATCH")
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request)
+        self.assertEqual(error.exception.code, 404)
+        error.exception.close()
+
+    def test_limits_profile_request_size(self):
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/profiles", data=b"x" * 4097, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request)
+        self.assertEqual(error.exception.code, 413)
+        error.exception.close()
+        self.assertFalse(self.requests)

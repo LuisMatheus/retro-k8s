@@ -42,6 +42,15 @@
 <body>
 <main>
   <h1>Retro-K8s test client</h1>
+  <section aria-label="Player profile">
+    <label for="profile-select">Profile</label>
+    <select id="profile-select"><option value="">Choose a profile</option></select>
+    <label for="profile-name">Name</label>
+    <input id="profile-name" maxlength="50" autocomplete="off">
+    <button id="profile-create" type="button">Create</button>
+    <button id="profile-rename" type="button" disabled>Rename selected</button>
+    <p id="profile-status" role="status"></p>
+  </section>
   <div class="tabs" id="tabs"></div>
   <div class="tabs" id="controls">
     <button id="unmute">Unmute</button>
@@ -86,9 +95,12 @@
 </main>
 
 <script type="module">
+import { mountProfiles } from "./profiles.js";
 import { InputClient } from "./input-client.js";
 import { shouldApplyConfig } from "./session-config.js";
 import { mountDiagnostics } from "./diagnostics.js";
+
+mountProfiles(document);
 
 const $ = (id) => document.getElementById(id);
 const video = $("video");

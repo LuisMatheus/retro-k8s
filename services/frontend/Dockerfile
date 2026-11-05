@@ -5,7 +5,7 @@ WORKDIR /app
 COPY services/frontend/server.py /app/server.py
 COPY services/frontend/frontend.py /app/frontend.py
 COPY services/frontend/browser/ /app/browser/
-COPY services/input-agent/agent/__init__.py services/input-agent/agent/auth.py /app/agent/
+COPY services/runtimes/retroarch/input-agent/agent/__init__.py services/runtimes/retroarch/input-agent/agent/auth.py /app/agent/
 ENV PYTHONUNBUFFERED=1 DEV_HOST=0.0.0.0 DEV_PORT=8000
 USER 1000:1000
 EXPOSE 8000

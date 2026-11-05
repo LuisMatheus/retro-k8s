@@ -30,7 +30,7 @@ Environment:
   OPERATOR_IMAGE    Operator image (default: retro-k8s-poc/operator:pilot)
   SESSION_IMAGE     Default emulator image for sessions
   LOCAL_MEDIA_IMAGE Pod-local MediaMTX image (default: bluenviron/mediamtx:1)
-  GAMES_DIR         Shared ROM library root to attach (required; ROM_DIR is a legacy alias)
+  GAMES_DIR         Shared ROM library root (default: repository games/; ROM_DIR is a legacy alias)
   NODE_INPUT_ROOT   Node hostPath root (default: /run/retro-k8s-input)
   PUID/PGID/INPUT_GID, LOG_LEVEL, MIN_HOLD_MS
                     Session identity and input defaults, read from .env first
@@ -70,10 +70,8 @@ from_env_or_file() {
 
 games_dir=$(from_env_or_file GAMES_DIR)
 [[ -n $games_dir ]] || games_dir=$(from_env_or_file ROM_DIR)
-[[ -n $games_dir ]] || {
-  echo "Set GAMES_DIR in .env or the environment to the shared ROM library root." >&2
-  exit 1
-}
+[[ -n $games_dir ]] || games_dir=$repo_root/games
+[[ $games_dir = /* ]] || games_dir=$repo_root/$games_dir
 rom_dir=$games_dir
 
 uid=$(from_env_or_file PUID); uid=${uid:-1000}
@@ -166,7 +164,6 @@ patches:
                   - --default-image=$session_image
                   - --local-media-image=$local_media_image
                   - --image-pull-policy=Never
-                  - --rom-library-path=$node_input_root/roms
                   - --rom-mount-path=/roms
                   - --node-input-root=$node_input_root
                   - --token-secret=retro-session-secret
@@ -196,7 +193,9 @@ kubectl --context "$profile" -n "$namespace" rollout status \
 echo
 kubectl --context "$profile" -n "$namespace" get deployment/retrosession-operator
 echo
+echo "Keep the games mount running: MINIKUBE_PROFILE=$profile bash $repo_root/bootstrap/minikube/mount-games.sh"
+echo "Keep the saves mount running: MINIKUBE_PROFILE=$profile bash $repo_root/bootstrap/minikube/mount-saves.sh"
 echo "Apply a session with:"
-echo "  kubectl --context $profile apply -f $repo_root/services/operator/samples/snes/chrono-trigger-saves.yaml"
+echo "  kubectl --context $profile apply -k $repo_root/bootstrap/minikube/storage/snes"
 echo "  kubectl --context $profile apply -f $repo_root/services/operator/samples/snes/retrosession-snes.yaml"
 echo "Then run: bash $repo_root/services/operator/verify-snes-session.sh"

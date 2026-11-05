@@ -36,11 +36,13 @@ restarting the running game.
 bootstrap/minikube/       Local setup scripts and shared platform overlay
 services/
   frontend/              Browser UI, proxy, and its Kubernetes manifests
-  input-agent/           Gamepad input code included in the session image
   mediamtx/k8s/          Shared streaming server and its manifests
   operator/              RetroSession controller, manifests, and samples
   profile-api/           Phoenix API, SQLite schema, and manifests
-  retroarch/             Emulator image and startup scripts
+  runtimes/              Emulator runtimes
+    retroarch/           RetroArch image and startup scripts
+      input-agent/       Gamepad code included in the session image
+games/                   Local read-only ROM library (not tracked by Git)
 profiles/                Local SQLite data (not tracked by Git)
 saves/                   Local game saves (not tracked by Git)
 ```
@@ -52,7 +54,7 @@ See the [operator README](services/operator/README.md) for the API, reconciliati
 configuration and verification details, and the [frontend README](services/frontend/README.md)
 for the browser components.
 
-The session image starts `services/retroarch/start-session.sh`, which starts the
+The session image starts `services/runtimes/retroarch/start-session.sh`, which starts the
 input agent and then `start-retroarch.sh`. For local cluster setup, run
 `bootstrap/minikube/deploy-operator.sh` and `deploy-platform.sh`; use
 `port-forward-frontend.sh` to connect a browser.
@@ -107,21 +109,22 @@ numeric group with access to `/dev/uinput` for `INPUT_GID` and the generated
 random value for the secret. The private `.env`, ROMs and saves are not
 tracked in Git.
 
-Set `GAMES_DIR` in `.env` to the shared ROM library root. Keep one
-subdirectory per console, for example:
+Place your ROMs in the repository's `games/` directory, one subdirectory per
+console:
 
 ```text
-$GAMES_DIR/
+games/
 ├── snes/<game>.sfc
 └── gba/<game>.gba
 ```
 
-Session ROM paths are relative to `GAMES_DIR`. **Edit the sample `spec.rom` to
-match your file**. A session only needs its own console's ROM. `GAMES_DIR` is
-required; the scripts still accept `ROM_DIR` as a legacy alias. If an existing
-node attachment uses the old SNES-only root, follow the
-[migration instructions](services/operator/README.md#existing-snes-only-attachment)
-before changing it.
+The local game mount defaults to this directory. Each console has a separate
+read-only game PVC, mounted by the operator into its sessions.
+To use another library, set `GAMES_DIR` in `.env` to its absolute path. Existing
+`.env` values still take precedence; relative paths are relative to the repository
+root. Session ROM paths are relative to the library root. **Edit the sample
+`spec.rom` to match your file**. If the node already has a different library
+attached, follow the [attachment instructions](services/operator/README.md#existing-snes-only-attachment).
 
 ### 2. Start Minikube and load images
 
@@ -131,7 +134,7 @@ From the repository root:
 bash bootstrap/minikube/start.sh
 
 docker build -t retro-k8s-poc/retroarch-input:latest -t retro-k8s-poc/retroarch-input:pilot \
-  --target retroarch-input -f services/retroarch/Dockerfile .
+  --target retroarch-input -f services/runtimes/retroarch/Dockerfile .
 docker build -t retro-k8s-poc/frontend:latest -t retro-k8s-poc/frontend:pilot \
   -f services/frontend/Dockerfile .
 docker pull bluenviron/mediamtx:1
@@ -157,22 +160,50 @@ the frontend and shared MediaMTX, advertising the Minikube IP for WebRTC. See
 [operator deployment](services/operator/README.md#deploy-on-minikube) for options and
 attachment details.
 
-### 4. Create a session
+### 4. Mount saves and create a session
 
-After updating the sample ROM path to match your library, apply its save claim
-and `RetroSession`:
+From the repository root, keep each of these commands running in a separate
+terminal while sessions are running. They connect the host game and save folders
+to the Minikube node:
+
+```bash
+bash bootstrap/minikube/mount-saves.sh
+# In another terminal:
+bash bootstrap/minikube/mount-games.sh
+```
+
+Then, after updating the sample ROM path, apply the local save volume and its
+`RetroSession`:
 
 ```bash
 # SNES
-kubectl --context minikube apply -f services/operator/samples/snes/chrono-trigger-saves.yaml
+kubectl --context minikube apply -k bootstrap/minikube/storage/snes
 kubectl --context minikube apply -f services/operator/samples/snes/retrosession-snes.yaml
 
 # Or GBA
-kubectl --context minikube apply -f services/operator/samples/gba/gba-saves.yaml
+kubectl --context minikube apply -k bootstrap/minikube/storage/gba
 kubectl --context minikube apply -f services/operator/samples/gba/retrosession-gba.yaml
 
 kubectl --context minikube -n retro-k8s get retrosessions,pods,pvc
 ```
+
+Each local storage configuration creates separate game and save PVs and PVCs.
+The game PVs map `games/snes/` and `games/gba/` into the corresponding
+sessions; the session mounts are read-only. The sample save claims use separate PersistentVolumes: `retro-k8s-local-snes-saves`
+maps to `saves/snes/`, and `retro-k8s-local-gba-saves` maps to `saves/gba/`.
+The script mounts their common parent once; each PV points to its own directory.
+To add a console, create its directory under `saves/`, add game and save PVs and PVCs under
+`bootstrap/minikube/storage/<console>/` with unique names and matching node
+paths, add console support to the operator, and set the session's `saveClaimName` to its save PVC. They
+are writable by the session's configured UID/GID. Keep the mount active and
+restart both mounts after Minikube stops; stop session Pods before the mount is removed.
+These static local volumes use `Retain` and are for the single-node Minikube
+pilot. They do not create per-player isolation or backups.
+
+**Existing installations:** a bound PVC cannot be switched to the local volume
+in place, and applying this overlay does not migrate its data. Back up and migrate
+any existing saves before replacing the claim. For a portable dynamic PVC instead,
+use the save claim manifests under `services/operator/samples/`.
 
 The frontend discovers the sessions when they become ready. Give each running
 session its own save claim; the operator does not create or delete claims.
@@ -182,8 +213,9 @@ end-to-end guarantee that browser playback works.
 
 ### Optional: deploy the profile API
 
-The profile API is an independent, experimental service; the frontend does not
-use it yet. After starting Minikube, use its [setup instructions](services/profile-api/README.md)
+The profile API is an independent, experimental service. The frontend can list,
+create, rename, and select profiles, but profiles do not yet own sessions or saves.
+After starting Minikube, use its [setup instructions](services/profile-api/README.md)
 to build the image, create its Secret, mount `profiles/`, and apply its local
 overlay. This can be done after the namespace is created in step 3.
 
@@ -231,10 +263,14 @@ first.
 On a normal Minikube restart, previously applied resources and PVCs remain in
 the cluster. You normally do not need to rebuild images, redeploy the operator,
 or reapply session manifests unless they have changed or are missing. Start
-Minikube, check session readiness and run the browser port-forward:
+Minikube, restore the game and save mounts before starting session Pods, check session
+readiness and run the browser port-forward. The mount must remain running in a
+separate terminal:
 
 ```bash
 bash bootstrap/minikube/start.sh
+# In separate terminals: bash bootstrap/minikube/mount-saves.sh
+# and bash bootstrap/minikube/mount-games.sh
 kubectl --context minikube -n retro-k8s get retrosessions,pods,pvc
 bash bootstrap/minikube/port-forward-frontend.sh
 ```
@@ -299,9 +335,9 @@ For automated checks:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r services/input-agent/requirements.txt
-.venv/bin/python -m unittest discover -s services/input-agent/tests -t services/input-agent -v
-PYTHONPATH=services/frontend:services/input-agent .venv/bin/python -m unittest discover -s services/frontend/tests -t services/frontend -v
+.venv/bin/pip install -r services/runtimes/retroarch/input-agent/requirements.txt
+.venv/bin/python -m unittest discover -s services/runtimes/retroarch/input-agent/tests -t services/runtimes/retroarch/input-agent -v
+PYTHONPATH=services/frontend:services/runtimes/retroarch/input-agent .venv/bin/python -m unittest discover -s services/frontend/tests -t services/frontend -v
 node --test services/frontend/tests/*.mjs
 (cd services/operator && make test)
 bash services/operator/tests/media-recovery.sh
@@ -350,4 +386,4 @@ before supporting multiple untrusted players.
 To add another Libretro console, include its core in the RetroArch image and
 extend the operator's console API, core mapping and tests. A different emulator
 runtime also needs an operator workload implementation; adding a directory
-under `services/retroarch/` alone does not make it available.
+under `services/runtimes/retroarch/` alone does not make it available.

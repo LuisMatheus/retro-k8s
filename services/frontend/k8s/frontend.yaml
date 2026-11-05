@@ -43,6 +43,8 @@ spec:
               value: 0.0.0.0
             - name: DEV_PORT
               value: "8000"
+            - name: PROFILE_API_HOST
+              value: profile-api
             - name: MEDIA_HOST
               value: mediamtx
             - name: MEDIA_WHEP_PORT

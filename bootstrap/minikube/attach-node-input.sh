@@ -8,7 +8,9 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "$0")" && pwd)
 profile=${MINIKUBE_PROFILE:-minikube}
 root=${NODE_INPUT_ROOT:-/run/retro-k8s-input}
-rom_dir=${GAMES_DIR:-${ROM_DIR:-}}
+repo_root=$(cd "$script_dir/../.." && pwd)
+rom_dir=${GAMES_DIR:-${ROM_DIR:-$repo_root/games}}
+[[ $rom_dir = /* ]] || rom_dir=$repo_root/$rom_dir
 image=${HELPER_IMAGE:-retro-k8s-poc/retroarch-input:latest}
 state=$script_dir/.node-input-state
 legacy_state=$script_dir/../../k8s/local/.node-input-state

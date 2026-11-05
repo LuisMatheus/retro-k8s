@@ -1,7 +1,7 @@
 # Retro-K8s input agent
 
 Browser → authenticated WebSocket → Python agent → uinput gamepad → RetroArch.
-The agent and emulator share a container. See [the project README](../../README.md)
+The agent and emulator share a container. See [the project README](../../../../README.md)
 for the integrated build, Linux host setup and browser UI.
 
 The operator deploys the agent inside each emulator container. The `frontend`
@@ -13,9 +13,9 @@ From the repository root:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r services/input-agent/requirements.txt
-.venv/bin/python -m unittest discover -s services/input-agent/tests -t services/input-agent -v
-PYTHONPATH=services/frontend:services/input-agent .venv/bin/python -m unittest discover -s services/frontend/tests -t services/frontend -v
+.venv/bin/pip install -r services/runtimes/retroarch/input-agent/requirements.txt
+.venv/bin/python -m unittest discover -s services/runtimes/retroarch/input-agent/tests -t services/runtimes/retroarch/input-agent -v
+PYTHONPATH=services/frontend:services/runtimes/retroarch/input-agent .venv/bin/python -m unittest discover -s services/frontend/tests -t services/frontend -v
 node --test services/frontend/tests/*.mjs
 ```
 
@@ -81,12 +81,12 @@ For an existing compatible RetroArch base image, the standalone image is an
 alternative to the shared RetroArch runtime build:
 
 ```bash
-docker build -f services/input-agent/Dockerfile \
+docker build -f services/runtimes/retroarch/input-agent/Dockerfile \
   --build-arg BASE_IMAGE=retro-k8s-poc/retroarch:latest \
   -t retro-k8s-poc/retroarch-input:latest .
 ```
 
-The base must include `services/retroarch/start-retroarch.sh` and its RTMP configuration.
+The base must include `services/runtimes/retroarch/start-retroarch.sh` and its RTMP configuration.
 The runtime's multi-stage Dockerfile builds the same image without a separate
 base build.
 

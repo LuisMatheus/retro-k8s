@@ -69,8 +69,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 RUN mkdir -p /saves/states /bios /tmp/.X11-unix \
     && chmod 1777 /tmp/.X11-unix
 
-COPY services/retroarch/start-retroarch.sh /usr/local/bin/start-retroarch.sh
-COPY services/retroarch/rtmp.cfg /etc/retroarch/rtmp.cfg
+COPY services/runtimes/retroarch/start-retroarch.sh /usr/local/bin/start-retroarch.sh
+COPY services/runtimes/retroarch/rtmp.cfg /etc/retroarch/rtmp.cfg
 
 RUN chmod +x /usr/local/bin/start-retroarch.sh
 
@@ -91,11 +91,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-venv python3-evdev \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv --system-site-packages /opt/venv
-COPY services/input-agent/requirements.txt /tmp/input-requirements.txt
+COPY services/runtimes/retroarch/input-agent/requirements.txt /tmp/input-requirements.txt
 RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/input-requirements.txt
 WORKDIR /app
-COPY services/input-agent/agent/ /app/agent/
-COPY services/retroarch/start-session.sh /start-session.sh
+COPY services/runtimes/retroarch/input-agent/agent/ /app/agent/
+COPY services/runtimes/retroarch/start-session.sh /start-session.sh
 RUN chmod +x /start-session.sh
 ENV PATH="/opt/venv/bin:${PATH}" PYTHONUNBUFFERED=1 \
     ORIGINAL_ENTRYPOINT=/usr/local/bin/start-retroarch.sh INPUT_AGENT=1

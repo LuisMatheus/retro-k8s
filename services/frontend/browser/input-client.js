@@ -175,7 +175,11 @@ export class InputClient {
   key(e, down) {
     const name = KEYMAP[e.code];
     if (!name) return;
-    e.preventDefault();
+    const target = e.target;
+    const editing = target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName || "");
+    // A key released after focus moves into a form must still be released in-game.
+    if (editing && (down || !this.keys.has(name))) return;
+    if (!editing) e.preventDefault();
     if (down) this.keys.add(name); else this.keys.delete(name);
     this.setButton(name, this.keys.has(name) || !!this.padButtons[name]);
   }

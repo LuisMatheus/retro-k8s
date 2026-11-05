@@ -518,7 +518,9 @@ func (r *RetroSessionReconciler) desiredDeployment(session *v1alpha1.RetroSessio
 	if logLevel == "" {
 		logLevel = r.Config.DefaultLogLevel
 	}
-	romPath := path.Join(r.Config.ROMMountPath, session.Spec.ROM)
+	romName := strings.TrimPrefix(session.Spec.ROM, string(session.Spec.Console)+"/")
+	romMount := path.Join(r.Config.ROMMountPath, string(session.Spec.Console))
+	romPath := path.Join(romMount, romName)
 	rtspURL := fmt.Sprintf("rtsp://%s:%d/%s", r.Config.MediaService, mediaRTSPPort, session.Name)
 
 	env := []corev1.EnvVar{
@@ -592,7 +594,7 @@ func (r *RetroSessionReconciler) desiredDeployment(session *v1alpha1.RetroSessio
 						},
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "saves", MountPath: "/saves"},
-							{Name: "roms", MountPath: r.Config.ROMMountPath, ReadOnly: true},
+							{Name: "roms", MountPath: romMount, ReadOnly: true},
 							{Name: "uinput", MountPath: "/dev/uinput"},
 							{Name: "events", MountPath: "/host-input", ReadOnly: true},
 							{Name: "session-input", MountPath: "/dev/input"},
@@ -646,7 +648,7 @@ func (r *RetroSessionReconciler) desiredDeployment(session *v1alpha1.RetroSessio
 					}},
 					Volumes: []corev1.Volume{
 						{Name: "saves", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: session.Spec.SaveClaimName}}},
-						{Name: "roms", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: r.Config.ROMLibraryPath, Type: ptr.To(corev1.HostPathDirectory)}}},
+						{Name: "roms", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "retro-k8s-" + string(session.Spec.Console) + "-games", ReadOnly: true}}},
 						{Name: "uinput", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: path.Join(r.Config.NodeInputRoot, "dev/uinput"), Type: ptr.To(corev1.HostPathCharDev)}}},
 						{Name: "events", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: path.Join(r.Config.NodeInputRoot, "dev/input"), Type: ptr.To(corev1.HostPathDirectory)}}},
 						{Name: "session-input", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
